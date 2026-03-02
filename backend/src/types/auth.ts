@@ -1,41 +1,30 @@
 // Type definitions for authentication requests and responses
 
+// Response format for successful authentication
 export interface AuthResponse {
   success: boolean;
   message: string;
   token?: string;
-  refreshToken?: string;
   user?: {
     id: number;
     email: string;
     fullName: string;
     role: 'customer' | 'chef' | 'delivery' | 'admin';
-    isVerified: boolean;
-    hasProfile: boolean;
   };
 }
 
+// Request body for user registration
 export interface RegisterRequest {
-  name: string;
+  fullName: string;
   email: string;
-  phone: string;
   password: string;
+  role?: 'customer' | 'chef';
+  chefBusinessName?: string;
+  phone?: string;
 }
 
-export interface VerifyOtpRequest {
-  email: string;
-  otp: string;
-}
-
+// Request body for user login
 export interface LoginRequest {
   email: string;
   password: string;
-}
-
-export interface CustomerProfileRequest {
-  address: string;
-  pincode: string;
-  lat?: number;
-  lng?: number;
-  preference: string;
 }

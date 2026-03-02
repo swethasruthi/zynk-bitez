@@ -25,9 +25,6 @@ import authRoutes from "./routes/authRoutes.js";
 import subscriptionRoutes from "./routes/subscriptionRoutes.js";
 import recommendationRoutes from "./routes/recommendationRoutes.js";
 import skipDecisionRoutes from "./routes/skipDecisionRoutes.js";
-import customerRoutes from "./routes/customerRoutes.js";
-import chefRoutes from "./routes/chefRoutes.js";
-import { initializeNotificationService } from "./services/notificationService.js";
 import { errorHandler, notFoundHandler } from "./middlewares/errorHandler.js";
 
 // -----------------------------------------------------------------------------
@@ -75,24 +72,19 @@ async function startServer() {
     await initializeDatabase();
     console.log("✓ Database connected successfully");
 
-    // 2️⃣ Initialize event listeners
-    initializeNotificationService();
-
-    // 3️⃣ Register routes AFTER DB is ready
+    // 2️⃣ Register routes AFTER DB is ready
     app.use("/api/auth", authRoutes);
     app.use("/api/subscriptions", subscriptionRoutes);
     app.use("/api/recommendations", recommendationRoutes);
     app.use("/api/skip-decision", skipDecisionRoutes);
-    app.use("/api", customerRoutes);
-    app.use("/api", chefRoutes);
 
-    // 4️⃣ 404 handler
+    // 3️⃣ 404 handler
     app.use(notFoundHandler);
 
-    // 5️⃣ Global error handler (LAST)
+    // 4️⃣ Global error handler (LAST)
     app.use(errorHandler);
 
-    // 6️⃣ Start server
+    // 5️⃣ Start server
     app.listen(PORT, () => {
       console.log(`🚀 Server running on http://localhost:${PORT}`);
       console.log(`📡 CORS enabled for ${CLIENT_URL}`);

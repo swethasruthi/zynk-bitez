@@ -7,13 +7,12 @@ import { AuthProvider } from "@/contexts/AuthContext";
 import Index from "./pages/Index";
 import { Login } from "./pages/Login";
 import { Register } from "./pages/Register";
-import { Dashboard, CustomerHome, ChefDashboardPage, DeliveryDashboardPage, AdminDashboardPage } from "./pages/Dashboard";
+import { Dashboard } from "./pages/Dashboard";
 import ChefDiscovery from "./pages/ChefDiscovery";
 import ChefDetail from "./pages/ChefDetail";
 import Subscribe from "./pages/Subscribe";
 import MealRecommendations from "./pages/MealRecommendations";
 import WeeklyMenu from "./pages/WeeklyMenu";
-import CustomerOnboarding from "./pages/CustomerOnboarding";
 import NotFound from "./pages/NotFound";
 
 const queryClient = new QueryClient();
@@ -30,11 +29,6 @@ const App = () => (
             <Route path="/login" element={<Login />} />
             <Route path="/register" element={<Register />} />
             <Route path="/dashboard" element={<Dashboard />} />
-            <Route path="/customer/home" element={<CustomerHome />} />
-            <Route path="/customer/onboarding" element={<CustomerOnboarding />} />
-            <Route path="/chef/dashboard" element={<ChefDashboardPage />} />
-            <Route path="/delivery/dashboard" element={<DeliveryDashboardPage />} />
-            <Route path="/admin/dashboard" element={<AdminDashboardPage />} />
             <Route path="/chefs" element={<ChefDiscovery />} />
             <Route path="/chef/:chefId" element={<ChefDetail />} />
             <Route path="/subscribe" element={<Subscribe />} />

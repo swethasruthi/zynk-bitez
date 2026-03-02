@@ -1920,7 +1920,7 @@ export const getSkipDecision = (request: SkipDecisionRequest): SkipDecisionRespo
 
   // Factor 3: Health goal impact (0-2 points)
   if (request.healthGoal === 'muscle-gain') riskScore += 2; // Needs regular protein
-  else if (request.healthGoal === 'energy') riskScore += 1.5; // Needs regular energy
+  else if (request.healthGoal === 'energy-boost') riskScore += 1.5; // Needs regular energy
   else if (request.healthGoal === 'weight-loss') riskScore -= 1; // Can handle occasional skips
   else if (request.healthGoal === 'balanced') riskScore += 0; // Neutral
 
@@ -1975,7 +1975,7 @@ export const getSkipDecision = (request: SkipDecisionRequest): SkipDecisionRespo
   const healthTips = generateSkipHealthTips(
     request.mealType,
     request.healthGoal,
-    request.skipCount
+    skipCount
   );
 
   return {
@@ -2058,7 +2058,7 @@ const generateLightMealSuggestions = (
     }));
   } else if (healthGoal === 'weight-loss') {
     return baseSuggestions.filter((meal) => meal.calories < 250);
-  } else if (healthGoal === 'energy') {
+  } else if (healthGoal === 'energy-boost') {
     return baseSuggestions.sort((a, b) => b.calories - a.calories);
   }
 
@@ -2091,10 +2091,10 @@ const generateSkipHealthTips = (
   } else if (healthGoal === 'weight-loss') {
     tips.push('While occasional meal skipping can fit some diets, aim for balanced portions instead');
     tips.push('Regular meals actually support metabolism better than sporadic eating');
-  } else if (healthGoal === 'energy') {
+  } else if (healthGoal === 'energy-boost') {
     tips.push('Consistent meals throughout the day maintain stable blood sugar and energy levels');
     tips.push('Skipping meals can cause energy crashes and reduced productivity');
-  } else if (healthGoal === 'maintenance') {
+  } else if (healthGoal === 'improved-digestion') {
     tips.push('Regular meal timing helps establish healthy digestive rhythms');
     tips.push('Avoid large gaps between meals for optimal digestive health');
   }

@@ -1,183 +1,161 @@
 import express from 'express';
 import { hashPassword, comparePassword } from '../utils/bcrypt.js';
-import { signToken, signRefreshToken } from '../utils/jwt.js';
-import { getUserByEmail, getUserById, createUser, emailExists, phoneExists, updateUser, getCustomerProfile, createCustomerProfile, updateCustomerProfile } from '../models/userQueries.js';
-import { RegisterRequest, LoginRequest, VerifyOtpRequest, CustomerProfileRequest, AuthResponse } from '../types/auth.js';
-import { emitNotification } from '../services/notificationService.js';
+import { signToken } from '../utils/jwt.js';
+import { getUserByEmail, createUser, emailExists } from '../models/userQueries.js';
+import { RegisterRequest, LoginRequest, AuthResponse } from '../types/auth.js';
 
-const generateOtp = (): string => Math.floor(100000 + Math.random() * 900000).toString();
-
+// Register a new user (customer or chef)
 export const register = async (req: express.Request, res: express.Response): Promise<void> => {
   try {
-    const { name, email, phone, password, role } = req.body as RegisterRequest & { role?: 'customer' | 'chef' };
-    if (!name || !email || !phone || !password) {
-      res.status(400).json({ success: false, message: 'name, email, phone, and password are required' });
+    const { fullName, email, password, role, chefBusinessName, phone } = req.body as RegisterRequest;
+
+    // Validate required fields
+    if (!fullName || !email || !password) {
+      res.status(400).json({ success: false, message: 'fullName, email, and password are required' });
       return;
     }
 
-    const normalizedEmail = email.toLowerCase().trim();
-    if (await emailExists(normalizedEmail)) {
+    // Validate password length (minimum 6 characters)
+    if (password.length < 6) {
+      res.status(400).json({ success: false, message: 'Password must be at least 6 characters' });
+      return;
+    }
+
+    // Check if email already exists
+    if (await emailExists(email)) {
       res.status(409).json({ success: false, message: 'Email already registered' });
       return;
     }
-    if (await phoneExists(phone.trim())) {
-      res.status(409).json({ success: false, message: 'Phone number already registered' });
+
+    // Default role is 'customer' if not specified
+    const userRole = role || 'customer';
+
+    // Validate chef-specific fields
+    if (userRole === 'chef' && !chefBusinessName) {
+      res.status(400).json({ success: false, message: 'chefBusinessName is required for chef role' });
       return;
     }
 
-    const otpCode = generateOtp();
-    const otpExpiresAt = new Date(Date.now() + 10 * 60 * 1000);
+    // Hash password before storing
+    const passwordHash = await hashPassword(password);
 
-    const user = await createUser({
-      fullName: name.trim(),
-      email: normalizedEmail,
-      passwordHash: await hashPassword(password),
-      role: role === 'chef' ? 'chef' : 'customer',
-      phone: phone.trim(),
+    // Create user in database
+    const newUser = await createUser({
+      fullName,
+      email,
+      passwordHash,
+      role: userRole,
+      chefBusinessName: userRole === 'chef' ? chefBusinessName : null,
+      phone: phone || null,
       isActive: true,
-      isVerified: false,
-      status: 'pending',
-      otpCode,
-      otpExpiresAt,
     });
 
-    console.log(`[DEV] OTP for ${normalizedEmail}: ${otpCode}`);
-    emitNotification({ userId: user.id, type: 'otp_generated', title: 'Verify your account', message: 'Verify your account to continue' });
+    // Generate JWT token
+    const token = signToken({
+      userId: newUser.id,
+      email: newUser.email,
+      role: newUser.role,
+    });
 
-    res.status(201).json({ success: true, message: 'Registration successful. Verify OTP to continue.' });
-  } catch (error) {
+    // Return success response
+    const response: AuthResponse = {
+      success: true,
+      message: `${userRole === 'chef' ? 'Chef' : 'Customer'} registered successfully`,
+      token,
+      user: {
+        id: newUser.id,
+        email: newUser.email,
+        fullName: newUser.fullName,
+        role: newUser.role,
+      },
+    };
+
+    res.status(201).json(response);
+  } catch (error: any) {
     console.error('Registration error:', error);
     res.status(500).json({ success: false, message: 'Internal server error' });
   }
 };
 
-export const verifyOtp = async (req: express.Request, res: express.Response): Promise<void> => {
-  try {
-    const { email, otp } = req.body as VerifyOtpRequest;
-    if (!email || !otp) {
-      res.status(400).json({ success: false, message: 'email and otp are required' });
-      return;
-    }
-
-    const user = await getUserByEmail(email.toLowerCase().trim());
-    if (!user || !user.otpCode || user.otpCode !== otp || !user.otpExpiresAt || new Date() > user.otpExpiresAt) {
-      res.status(400).json({ success: false, message: 'Invalid or expired OTP' });
-      return;
-    }
-
-    await updateUser(user.id, { isVerified: true, status: 'active', otpCode: null, otpExpiresAt: null });
-    emitNotification({ userId: user.id, type: 'account_activated', title: 'Account activated', message: 'Your ZYNK account is activated' });
-
-    res.status(200).json({ success: true, message: 'Account verified successfully.' });
-  } catch (error) {
-    console.error('OTP verification error:', error);
-    res.status(500).json({ success: false, message: 'Internal server error' });
-  }
-};
-
-export const resendOtp = async (req: express.Request, res: express.Response): Promise<void> => {
-  try {
-    const { email } = req.body as { email?: string };
-    if (!email) {
-      res.status(400).json({ success: false, message: 'email is required' });
-      return;
-    }
-    const user = await getUserByEmail(email.toLowerCase().trim());
-    if (!user || user.isVerified) {
-      res.status(400).json({ success: false, message: 'Invalid request' });
-      return;
-    }
-
-    const otpCode = generateOtp();
-    await updateUser(user.id, { otpCode, otpExpiresAt: new Date(Date.now() + 10 * 60 * 1000) });
-    console.log(`[DEV] Resent OTP for ${email}: ${otpCode}`);
-    emitNotification({ userId: user.id, type: 'otp_generated', title: 'Verify your account', message: 'Verify your account to continue' });
-
-    res.status(200).json({ success: true, message: 'OTP resent successfully.' });
-  } catch (error) {
-    console.error('Resend OTP error:', error);
-    res.status(500).json({ success: false, message: 'Internal server error' });
-  }
-};
-
+// Login an existing user
 export const login = async (req: express.Request, res: express.Response): Promise<void> => {
   try {
     const { email, password } = req.body as LoginRequest;
-    const user = await getUserByEmail(email.toLowerCase().trim());
 
-    if (!user || !user.isVerified || user.status !== 'active' || !(await comparePassword(password, user.passwordHash))) {
-      res.status(401).json({ success: false, message: 'Invalid credentials or inactive account' });
+    // Validate required fields
+    if (!email || !password) {
+      res.status(400).json({ success: false, message: 'Email and password are required' });
       return;
     }
 
-    const profile = user.role === 'customer' ? await getCustomerProfile(user.id) : null;
-    const payload = { userId: user.id, email: user.email, role: user.role };
+    // Fetch user by email
+    const user = await getUserByEmail(email);
 
+    // Check if user exists
+    if (!user) {
+      res.status(401).json({ success: false, message: 'Invalid email or password' });
+      return;
+    }
+
+    // Check if account is active
+    if (!user.isActive) {
+      res.status(403).json({ success: false, message: 'Account is inactive' });
+      return;
+    }
+
+    // Compare provided password with stored hash
+    const passwordMatch = await comparePassword(password, user.passwordHash);
+
+    if (!passwordMatch) {
+      res.status(401).json({ success: false, message: 'Invalid email or password' });
+      return;
+    }
+
+    // Generate JWT token
+    const token = signToken({
+      userId: user.id,
+      email: user.email,
+      role: user.role,
+    });
+
+    // Return success response
     const response: AuthResponse = {
       success: true,
       message: 'Login successful',
-      token: signToken(payload),
-      refreshToken: signRefreshToken(payload),
+      token,
       user: {
         id: user.id,
         email: user.email,
         fullName: user.fullName,
         role: user.role,
-        isVerified: user.isVerified,
-        hasProfile: user.role === 'customer' ? !!profile : true,
       },
     };
 
     res.status(200).json(response);
-  } catch (error) {
+  } catch (error: any) {
     console.error('Login error:', error);
     res.status(500).json({ success: false, message: 'Internal server error' });
   }
 };
 
-export const completeProfile = async (req: express.Request, res: express.Response): Promise<void> => {
-  try {
-    if (!req.user) {
-      res.status(401).json({ success: false, message: 'Not authenticated' });
-      return;
-    }
-
-    const { address, pincode, lat, lng, preference } = req.body as CustomerProfileRequest;
-    const existingProfile = await getCustomerProfile(req.user.userId);
-
-    const profile = existingProfile
-      ? await updateCustomerProfile(req.user.userId, { address: address.trim(), pincode: pincode.trim(), lat: lat || null, lng: lng || null, preference: preference.trim() })
-      : await createCustomerProfile({ userId: req.user.userId, address: address.trim(), pincode: pincode.trim(), lat: lat || null, lng: lng || null, preference: preference.trim() });
-
-    emitNotification({ userId: req.user.userId, type: 'profile_completed', title: 'Profile completed', message: 'Profile completed successfully' });
-
-    res.status(existingProfile ? 200 : 201).json({
-      success: true,
-      message: existingProfile ? 'Profile updated successfully' : 'Profile created successfully',
-      profile,
-      redirectTo: '/customer/home',
-    });
-  } catch (error) {
-    console.error('Complete profile error:', error);
-    res.status(500).json({ success: false, message: 'Internal server error' });
-  }
-};
-
+// Get current user profile (requires authentication)
 export const getProfile = async (req: express.Request, res: express.Response): Promise<void> => {
   try {
+    // User data is attached by authenticate middleware
     if (!req.user) {
       res.status(401).json({ success: false, message: 'Not authenticated' });
       return;
     }
 
+    // Fetch user from database
     const user = await getUserById(req.user.userId);
+
     if (!user) {
       res.status(404).json({ success: false, message: 'User not found' });
       return;
     }
 
-    const profile = await getCustomerProfile(user.id);
-
+    // Return user profile (exclude password hash)
     res.status(200).json({
       success: true,
       user: {
@@ -186,15 +164,16 @@ export const getProfile = async (req: express.Request, res: express.Response): P
         fullName: user.fullName,
         role: user.role,
         phone: user.phone,
-        isVerified: user.isVerified,
-        status: user.status,
-        hasProfile: !!profile,
+        chefBusinessName: user.chefBusinessName,
+        isActive: user.isActive,
         createdAt: user.createdAt,
       },
-      profile: profile || null,
     });
-  } catch (error) {
+  } catch (error: any) {
     console.error('Get profile error:', error);
     res.status(500).json({ success: false, message: 'Internal server error' });
   }
 };
+
+// Import getUserById for profile endpoint
+import { getUserById } from '../models/userQueries.js';

@@ -80,7 +80,7 @@ export const Subscribe = () => {
 
     if (response.success) {
       toast({ title: 'Subscription Active!', description: 'Your meals will start from tomorrow.' });
-      navigate('/customer/home');
+      navigate('/dashboard');
     } else {
       toast({ title: 'Error', description: response.error, variant: 'destructive' });
     }
