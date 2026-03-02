@@ -13,8 +13,11 @@ import {
 import {
   chefsWithPreview,
   chefFullDetails,
+  listSubscriptions,
   subscriptionDetail,
   subscriptionDeliveries,
+  pauseSubscriptionHandler,
+  resumeSubscriptionHandler,
 } from '../controllers/customerBrowseController.js';
 
 const router = express.Router();
@@ -28,10 +31,13 @@ router.post('/payments/webhook', paymentWebhook);
 router.patch('/delivery/:id/skip', authenticate, isCustomer, skipDelivery);
 router.patch('/delivery/:id/change-address', authenticate, isCustomer, changeDeliveryAddress);
 
-// ── New browse & tracking endpoints ───────────────────────────────────────────
+// ── Browse & tracking endpoints ───────────────────────────────────────────────
 router.get('/customer/chefs-with-preview', authenticate, isCustomer, chefsWithPreview);
 router.get('/customer/chefs/:id/full', authenticate, isCustomer, chefFullDetails);
+router.get('/customer/subscriptions', authenticate, isCustomer, listSubscriptions);
 router.get('/customer/subscription/:id', authenticate, isCustomer, subscriptionDetail);
 router.get('/customer/subscription/:id/deliveries', authenticate, isCustomer, subscriptionDeliveries);
+router.patch('/customer/subscription/:id/pause', authenticate, isCustomer, pauseSubscriptionHandler);
+router.patch('/customer/subscription/:id/resume', authenticate, isCustomer, resumeSubscriptionHandler);
 
 export default router;

@@ -275,3 +275,50 @@ export const getDeliveriesForSubscription = async (subscriptionId: number, userI
     .where(and(eq(deliveries.subscriptionId, subscriptionId), eq(deliveries.customerId, userId)))
     .orderBy(deliveries.deliveryDate);
 };
+
+// ── Subscription list + pause/resume ──────────────────────────────────────────
+
+export const getAllSubscriptionsForUser = async (userId: number) => {
+  const db = getDb();
+
+  return db
+    .select({
+      id: subscriptions.id,
+      userId: subscriptions.userId,
+      chefId: subscriptions.chefId,
+      planId: subscriptions.planId,
+      planName: subscriptions.planName,
+      status: subscriptions.status,
+      startDate: subscriptions.startDate,
+      nextBillingDate: subscriptions.nextBillingDate,
+      priceInCents: subscriptions.priceInCents,
+      priceSnapshot: subscriptions.priceSnapshot,
+      deliveryAddress: subscriptions.deliveryAddress,
+      postalCode: subscriptions.postalCode,
+      kitchenName: chefProfiles.kitchenName,
+    })
+    .from(subscriptions)
+    .leftJoin(chefProfiles, eq(chefProfiles.userId, subscriptions.chefId))
+    .where(eq(subscriptions.userId, userId))
+    .orderBy(subscriptions.createdAt);
+};
+
+export const pauseSubscriptionById = async (subscriptionId: number, userId: number) => {
+  const db = getDb();
+  const rows = await db
+    .update(subscriptions)
+    .set({ status: 'paused', updatedAt: new Date() })
+    .where(and(eq(subscriptions.id, subscriptionId), eq(subscriptions.userId, userId), eq(subscriptions.status, 'active')))
+    .returning();
+  return rows[0] ?? null;
+};
+
+export const resumeSubscriptionById = async (subscriptionId: number, userId: number) => {
+  const db = getDb();
+  const rows = await db
+    .update(subscriptions)
+    .set({ status: 'active', updatedAt: new Date() })
+    .where(and(eq(subscriptions.id, subscriptionId), eq(subscriptions.userId, userId), eq(subscriptions.status, 'paused')))
+    .returning();
+  return rows[0] ?? null;
+};

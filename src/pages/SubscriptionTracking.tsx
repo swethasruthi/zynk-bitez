@@ -1,12 +1,11 @@
 import { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { Layout } from '@/components/layout/Layout';
+import { CustomerLayout } from '@/components/customer/CustomerLayout';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useToast } from '@/hooks/use-toast';
-import { useAuth } from '@/contexts/AuthContext';
 import {
   ChefHat, Calendar, MapPin, Clock, CheckCircle2,
   SkipForward, Package, ArrowLeft, AlertCircle,
@@ -35,7 +34,6 @@ const statusColor: Record<string, string> = {
 const SubscriptionTracking = () => {
   const { subscriptionId } = useParams<{ subscriptionId: string }>();
   const navigate = useNavigate();
-  const { user } = useAuth();
   const { toast } = useToast();
 
   const [sub, setSub] = useState<SubscriptionResponse | null>(null);
@@ -44,12 +42,8 @@ const SubscriptionTracking = () => {
   const [skipping, setSkipping] = useState<number | null>(null);
 
   useEffect(() => {
-    if (!user || user.role !== 'customer') {
-      navigate('/login', { replace: true });
-      return;
-    }
     load();
-  }, [subscriptionId, user]);
+  }, [subscriptionId]);
 
   const load = async () => {
     setLoading(true);
@@ -71,7 +65,7 @@ const SubscriptionTracking = () => {
     setSkipping(deliveryId);
     try {
       await skipDelivery(deliveryId);
-      toast({ title: 'Delivery skipped', description: 'Your meal has been skipped for this day.' });
+      toast({ title: 'Delivery skipped' });
       await load();
     } catch (err: any) {
       toast({ title: 'Cannot skip', description: err.message, variant: 'destructive' });
@@ -86,152 +80,102 @@ const SubscriptionTracking = () => {
 
   if (loading) {
     return (
-      <Layout>
-        <div className="container py-8 px-4 max-w-3xl mx-auto space-y-4">
+      <CustomerLayout>
+        <div className="max-w-3xl space-y-4">
           <Skeleton className="h-8 w-48" />
           <Skeleton className="h-40 w-full rounded-xl" />
           <Skeleton className="h-24 w-full rounded-xl" />
-          <Skeleton className="h-24 w-full rounded-xl" />
         </div>
-      </Layout>
+      </CustomerLayout>
     );
   }
 
   if (!sub) {
     return (
-      <Layout>
-        <div className="container py-16 px-4 text-center">
+      <CustomerLayout>
+        <div className="text-center py-16">
           <AlertCircle className="w-12 h-12 mx-auto text-muted-foreground/50 mb-4" />
           <h2 className="font-display text-2xl font-bold mb-2">Subscription not found</h2>
-          <Button onClick={() => navigate('/customer/home')}>Back to Home</Button>
+          <Button onClick={() => navigate('/customer/subscriptions')}>Back to Subscriptions</Button>
         </div>
-      </Layout>
+      </CustomerLayout>
     );
   }
 
   return (
-    <Layout>
-      <div className="container py-8 px-4">
-        <div className="max-w-3xl mx-auto">
-          <Button variant="ghost" onClick={() => navigate('/customer/home')} className="mb-6">
-            <ArrowLeft className="w-4 h-4 mr-2" /> Back
-          </Button>
+    <CustomerLayout>
+      <div className="max-w-3xl">
+        <Button variant="ghost" onClick={() => navigate('/customer/subscriptions')} className="mb-6">
+          <ArrowLeft className="w-4 h-4 mr-2" /> Back
+        </Button>
 
-          {/* Subscription Summary */}
-          <Card className="shadow-elevated mb-8">
-            <CardHeader>
-              <div className="flex items-center justify-between">
-                <div>
-                  <CardTitle className="font-display text-xl">{sub.planName}</CardTitle>
-                  <CardDescription className="flex items-center gap-2 mt-1">
-                    <ChefHat className="w-4 h-4" />
-                    {sub.kitchenName ?? 'Chef'}
-                  </CardDescription>
-                </div>
-                <Badge
-                  className={sub.status === 'active' ? 'bg-accent/10 text-accent border-accent/20' : ''}
-                  variant={sub.status === 'active' ? 'outline' : 'secondary'}
-                >
-                  {sub.status}
-                </Badge>
+        {/* Subscription Summary */}
+        <Card className="shadow-elevated mb-8">
+          <CardHeader>
+            <div className="flex items-center justify-between">
+              <div>
+                <CardTitle className="font-display text-xl">{sub.planName}</CardTitle>
+                <CardDescription className="flex items-center gap-2 mt-1">
+                  <ChefHat className="w-4 h-4" /> {sub.kitchenName ?? 'Chef'}
+                </CardDescription>
               </div>
-            </CardHeader>
-            <CardContent>
-              <div className="grid sm:grid-cols-3 gap-4 text-sm">
-                <div className="flex items-center gap-2">
-                  <Calendar className="w-4 h-4 text-primary" />
-                  <div>
-                    <p className="text-muted-foreground">Start Date</p>
-                    <p className="font-medium">
-                      {sub.startDate ? new Date(sub.startDate).toLocaleDateString('en-IN') : '—'}
-                    </p>
-                  </div>
-                </div>
-                <div className="flex items-center gap-2">
-                  <Clock className="w-4 h-4 text-primary" />
-                  <div>
-                    <p className="text-muted-foreground">Next Billing</p>
-                    <p className="font-medium">
-                      {new Date(sub.nextBillingDate).toLocaleDateString('en-IN')}
-                    </p>
-                  </div>
-                </div>
-                <div className="flex items-center gap-2">
-                  <MapPin className="w-4 h-4 text-primary" />
-                  <div>
-                    <p className="text-muted-foreground">Delivery</p>
-                    <p className="font-medium truncate max-w-[160px]">{sub.deliveryAddress}</p>
-                  </div>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-
-          {/* Upcoming Deliveries */}
-          <h2 className="font-display text-lg font-bold mb-3 flex items-center gap-2">
-            <Package className="w-5 h-5 text-primary" />
-            Upcoming Deliveries ({upcoming.length})
-          </h2>
-
-          {upcoming.length === 0 ? (
-            <Card className="shadow-soft mb-8">
-              <CardContent className="p-8 text-center text-muted-foreground">No upcoming deliveries.</CardContent>
-            </Card>
-          ) : (
-            <div className="space-y-3 mb-8">
-              {upcoming.map((d) => {
-                const canSkip = d.status === 'scheduled' && beforeCutoff(d.deliveryDate);
-                return (
-                  <Card key={d.id} className="shadow-soft">
-                    <CardContent className="p-4 flex items-center justify-between">
-                      <div className="flex items-center gap-4">
-                        <div className={`w-10 h-10 rounded-xl flex items-center justify-center ${statusColor[d.status]}`}>
-                          {d.status === 'scheduled' && <Calendar className="w-5 h-5" />}
-                          {d.status === 'skipped' && <SkipForward className="w-5 h-5" />}
-                          {d.status === 'delivered' && <CheckCircle2 className="w-5 h-5" />}
-                        </div>
-                        <div>
-                          <p className="font-medium">
-                            {new Date(d.deliveryDate).toLocaleDateString('en-IN', {
-                              weekday: 'short', day: 'numeric', month: 'short',
-                            })}
-                          </p>
-                          <p className="text-sm text-muted-foreground capitalize">{d.mealType} • {d.status}</p>
-                        </div>
-                      </div>
-                      {canSkip && (
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          disabled={skipping === d.id}
-                          onClick={() => handleSkip(d.id)}
-                        >
-                          <SkipForward className="w-4 h-4 mr-1" />
-                          {skipping === d.id ? 'Skipping…' : 'Skip'}
-                        </Button>
-                      )}
-                    </CardContent>
-                  </Card>
-                );
-              })}
+              <Badge
+                className={sub.status === 'active' ? 'bg-accent/10 text-accent border-accent/20' : ''}
+                variant={sub.status === 'active' ? 'outline' : 'secondary'}
+              >
+                {sub.status}
+              </Badge>
             </div>
-          )}
+          </CardHeader>
+          <CardContent>
+            <div className="grid sm:grid-cols-3 gap-4 text-sm">
+              <div className="flex items-center gap-2">
+                <Calendar className="w-4 h-4 text-primary" />
+                <div>
+                  <p className="text-muted-foreground">Start Date</p>
+                  <p className="font-medium">
+                    {sub.startDate ? new Date(sub.startDate).toLocaleDateString('en-IN') : '—'}
+                  </p>
+                </div>
+              </div>
+              <div className="flex items-center gap-2">
+                <Clock className="w-4 h-4 text-primary" />
+                <div>
+                  <p className="text-muted-foreground">Next Billing</p>
+                  <p className="font-medium">{new Date(sub.nextBillingDate).toLocaleDateString('en-IN')}</p>
+                </div>
+              </div>
+              <div className="flex items-center gap-2">
+                <MapPin className="w-4 h-4 text-primary" />
+                <div>
+                  <p className="text-muted-foreground">Delivery</p>
+                  <p className="font-medium truncate max-w-[160px]">{sub.deliveryAddress}</p>
+                </div>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
 
-          {/* Past Deliveries */}
-          {past.length > 0 && (
-            <>
-              <h2 className="font-display text-lg font-bold mb-3 flex items-center gap-2">
-                <CheckCircle2 className="w-5 h-5 text-accent" />
-                Past Deliveries ({past.length})
-              </h2>
-              <div className="space-y-3">
-                {past.map((d) => (
-                  <Card key={d.id} className="shadow-soft opacity-75">
-                    <CardContent className="p-4 flex items-center gap-4">
+        {/* Upcoming */}
+        <h2 className="font-display text-lg font-bold mb-3 flex items-center gap-2">
+          <Package className="w-5 h-5 text-primary" /> Upcoming ({upcoming.length})
+        </h2>
+        {upcoming.length === 0 ? (
+          <Card className="shadow-soft mb-8">
+            <CardContent className="p-8 text-center text-muted-foreground">No upcoming deliveries.</CardContent>
+          </Card>
+        ) : (
+          <div className="space-y-3 mb-8">
+            {upcoming.map((d) => {
+              const canSkip = d.status === 'scheduled' && beforeCutoff(d.deliveryDate);
+              return (
+                <Card key={d.id} className="shadow-soft">
+                  <CardContent className="p-4 flex items-center justify-between">
+                    <div className="flex items-center gap-4">
                       <div className={`w-10 h-10 rounded-xl flex items-center justify-center ${statusColor[d.status]}`}>
-                        {d.status === 'delivered' && <CheckCircle2 className="w-5 h-5" />}
-                        {d.status === 'skipped' && <SkipForward className="w-5 h-5" />}
                         {d.status === 'scheduled' && <Calendar className="w-5 h-5" />}
+                        {d.status === 'skipped' && <SkipForward className="w-5 h-5" />}
+                        {d.status === 'delivered' && <CheckCircle2 className="w-5 h-5" />}
                       </div>
                       <div>
                         <p className="font-medium">
@@ -241,15 +185,51 @@ const SubscriptionTracking = () => {
                         </p>
                         <p className="text-sm text-muted-foreground capitalize">{d.mealType} • {d.status}</p>
                       </div>
-                    </CardContent>
-                  </Card>
-                ))}
-              </div>
-            </>
-          )}
-        </div>
+                    </div>
+                    {canSkip && (
+                      <Button size="sm" variant="outline" disabled={skipping === d.id} onClick={() => handleSkip(d.id)}>
+                        <SkipForward className="w-4 h-4 mr-1" />
+                        {skipping === d.id ? 'Skipping…' : 'Skip'}
+                      </Button>
+                    )}
+                  </CardContent>
+                </Card>
+              );
+            })}
+          </div>
+        )}
+
+        {/* Past */}
+        {past.length > 0 && (
+          <>
+            <h2 className="font-display text-lg font-bold mb-3 flex items-center gap-2">
+              <CheckCircle2 className="w-5 h-5 text-accent" /> Past ({past.length})
+            </h2>
+            <div className="space-y-3">
+              {past.map((d) => (
+                <Card key={d.id} className="shadow-soft opacity-75">
+                  <CardContent className="p-4 flex items-center gap-4">
+                    <div className={`w-10 h-10 rounded-xl flex items-center justify-center ${statusColor[d.status]}`}>
+                      {d.status === 'delivered' && <CheckCircle2 className="w-5 h-5" />}
+                      {d.status === 'skipped' && <SkipForward className="w-5 h-5" />}
+                      {d.status === 'scheduled' && <Calendar className="w-5 h-5" />}
+                    </div>
+                    <div>
+                      <p className="font-medium">
+                        {new Date(d.deliveryDate).toLocaleDateString('en-IN', {
+                          weekday: 'short', day: 'numeric', month: 'short',
+                        })}
+                      </p>
+                      <p className="text-sm text-muted-foreground capitalize">{d.mealType} • {d.status}</p>
+                    </div>
+                  </CardContent>
+                </Card>
+              ))}
+            </div>
+          </>
+        )}
       </div>
-    </Layout>
+    </CustomerLayout>
   );
 };
 

@@ -33,7 +33,7 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   return json as T;
 }
 
-// ── Customer Browse ───────────────────────────────────────────────────────────
+// ── Types ─────────────────────────────────────────────────────────────────────
 
 export interface ChefPreview {
   chefId: number;
@@ -43,9 +43,6 @@ export interface ChefPreview {
   dishesPreview: { planId: number; planName: string; monthlyPrice: number; mealType: string }[];
   startingPrice: number;
 }
-
-export const fetchChefsWithPreview = () =>
-  request<{ success: boolean; chefs: ChefPreview[] }>('/customer/chefs-with-preview');
 
 export interface ChefFull {
   chef: {
@@ -67,11 +64,6 @@ export interface ChefFull {
   }[];
 }
 
-export const fetchChefFull = (chefId: number) =>
-  request<{ success: boolean } & ChefFull>(`/customer/chefs/${chefId}/full`);
-
-// ── Subscription ──────────────────────────────────────────────────────────────
-
 export interface SubscriptionResponse {
   id: number;
   userId: number;
@@ -88,14 +80,45 @@ export interface SubscriptionResponse {
   kitchenName: string | null;
 }
 
+export interface DeliveryEntry {
+  id: number;
+  subscriptionId: number;
+  chefId: number;
+  customerId: number;
+  deliveryDate: string;
+  addressSnapshot: string;
+  mealType: string;
+  status: 'scheduled' | 'skipped' | 'delivered';
+  deliveredAt: string | null;
+}
+
+// ── Customer Browse ───────────────────────────────────────────────────────────
+
+export const fetchChefsWithPreview = () =>
+  request<{ success: boolean; chefs: ChefPreview[] }>('/customer/chefs-with-preview');
+
+export const fetchChefFull = (chefId: number) =>
+  request<{ success: boolean } & ChefFull>(`/customer/chefs/${chefId}/full`);
+
+// ── Subscriptions ─────────────────────────────────────────────────────────────
+
 export const createSubscription = (planId: number) =>
   request<{ success: boolean; subscription: { id: number } }>('/subscriptions', {
     method: 'POST',
     body: JSON.stringify({ planId }),
   });
 
+export const fetchMySubscriptions = () =>
+  request<{ success: boolean; subscriptions: SubscriptionResponse[] }>('/customer/subscriptions');
+
 export const fetchSubscription = (id: number) =>
   request<{ success: boolean; subscription: SubscriptionResponse }>(`/customer/subscription/${id}`);
+
+export const pauseSubscription = (id: number) =>
+  request<{ success: boolean }>(`/customer/subscription/${id}/pause`, { method: 'PATCH' });
+
+export const resumeSubscription = (id: number) =>
+  request<{ success: boolean }>(`/customer/subscription/${id}/resume`, { method: 'PATCH' });
 
 // ── Payment ───────────────────────────────────────────────────────────────────
 
@@ -112,18 +135,6 @@ export const sendPaymentWebhook = (orderId: string, paymentId: string, signature
   });
 
 // ── Deliveries ────────────────────────────────────────────────────────────────
-
-export interface DeliveryEntry {
-  id: number;
-  subscriptionId: number;
-  chefId: number;
-  customerId: number;
-  deliveryDate: string;
-  addressSnapshot: string;
-  mealType: string;
-  status: 'scheduled' | 'skipped' | 'delivered';
-  deliveredAt: string | null;
-}
 
 export const fetchDeliveries = (subscriptionId: number) =>
   request<{ success: boolean; deliveries: DeliveryEntry[] }>(`/customer/subscription/${subscriptionId}/deliveries`);
