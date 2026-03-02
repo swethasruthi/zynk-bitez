@@ -7,11 +7,7 @@ import { AuthProvider } from "@/contexts/AuthContext";
 import Index from "./pages/Index";
 import { Login } from "./pages/Login";
 import { Register } from "./pages/Register";
-import { Dashboard, ChefDashboardPage, DeliveryDashboardPage, AdminDashboardPage } from "./pages/Dashboard";
-import CustomerHomePage from "./pages/CustomerHomePage";
-import ChefDetailPage from "./pages/ChefDetailPage";
-import PaymentPage from "./pages/PaymentPage";
-import SubscriptionTracking from "./pages/SubscriptionTracking";
+import { Dashboard, CustomerHome, ChefDashboardPage, DeliveryDashboardPage, AdminDashboardPage } from "./pages/Dashboard";
 import ChefDiscovery from "./pages/ChefDiscovery";
 import ChefDetail from "./pages/ChefDetail";
 import Subscribe from "./pages/Subscribe";
@@ -34,17 +30,11 @@ const App = () => (
             <Route path="/login" element={<Login />} />
             <Route path="/register" element={<Register />} />
             <Route path="/dashboard" element={<Dashboard />} />
-            {/* Customer flow */}
-            <Route path="/customer/home" element={<CustomerHomePage />} />
+            <Route path="/customer/home" element={<CustomerHome />} />
             <Route path="/customer/onboarding" element={<CustomerOnboarding />} />
-            <Route path="/customer/chef/:chefId" element={<ChefDetailPage />} />
-            <Route path="/customer/payment/:subscriptionId" element={<PaymentPage />} />
-            <Route path="/customer/subscription/:subscriptionId" element={<SubscriptionTracking />} />
-            {/* Other role dashboards */}
             <Route path="/chef/dashboard" element={<ChefDashboardPage />} />
             <Route path="/delivery/dashboard" element={<DeliveryDashboardPage />} />
             <Route path="/admin/dashboard" element={<AdminDashboardPage />} />
-            {/* Legacy routes (preserved) */}
             <Route path="/chefs" element={<ChefDiscovery />} />
             <Route path="/chef/:chefId" element={<ChefDetail />} />
             <Route path="/subscribe" element={<Subscribe />} />
