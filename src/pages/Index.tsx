@@ -160,7 +160,7 @@ const Index = () => {
                   <div className="absolute inset-0 bg-gradient-to-br from-green-50 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-500" />
                   
                   <div className="relative z-10">
-                    <div className="w-16 h-16 rounded-lg bg-gray-900 flex items-center justify-center mb-6 group-hover:scale-110 transition-transform duration-300" style={{ boxShadow: '0 10px 30px rgba(0,0,0,0.1)' }}>
+                    <div className="w-16 h-16 rounded-lg bg-white flex items-center justify-center mb-6 group-hover:scale-110 transition-transform duration-300" style={{ boxShadow: '0 10px 30px rgba(0,0,0,0.1)' }}>
                       <feature.icon className="w-7 h-7 text-green-500 group-hover:animate-pulse" />
                     </div>
                     <h3 className="font-chef text-sm tracking-wider font-semibold mb-3 text-gray-900">{feature.title}</h3>
@@ -199,7 +199,7 @@ const Index = () => {
                   <span className="text-[120px] font-display font-bold text-gray-100 select-none leading-none">{item.step}</span>
                   {/* Floating icon box */}
                   <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2">
-                    <div className="w-20 h-20 rounded-lg bg-gray-900 flex items-center justify-center group-hover:scale-110 transition-all duration-500" style={{ boxShadow: '0 15px 40px rgba(0,0,0,0.15)' }}>
+                    <div className="w-20 h-20 rounded-lg bg-white flex items-center justify-center group-hover:scale-110 transition-all duration-500" style={{ boxShadow: '0 15px 40px rgba(0,0,0,0.15)' }}>
                       <item.icon className="w-9 h-9 text-green-500" />
                     </div>
                   </div>
@@ -302,7 +302,7 @@ const Index = () => {
                   <div className="absolute inset-0 bg-gradient-to-br from-green-50 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-500" />
                   
                   <div className="relative z-10">
-                    <div className="w-20 h-20 rounded-xl bg-gray-900 flex items-center justify-center mb-8 group-hover:scale-110 transition-transform duration-500" style={{ boxShadow: '0 15px 40px rgba(0,0,0,0.1)' }}>
+                    <div className="w-20 h-20 rounded-xl bg-white flex items-center justify-center mb-8 group-hover:scale-110 transition-transform duration-500" style={{ boxShadow: '0 15px 40px rgba(0,0,0,0.1)' }}>
                       <item.icon className="w-10 h-10 text-green-500" />
                     </div>
                     <p className="font-chef text-xs tracking-widest text-green-600 mb-3">{item.label}</p>
