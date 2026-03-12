@@ -9,6 +9,7 @@ import type {
   User, 
   Customer, 
   Chef,
+  ChefMenuChart,
   Subscription, 
   Meal, 
   Dish,
@@ -32,6 +33,42 @@ const sampleMeals: Meal[] = [
   { id: 'meal-8', name: 'Veg Biryani', description: 'Fragrant rice with mixed vegetables and herbs', category: 'Biryani', isVegetarian: true, calories: 520 },
 ];
 
+const buildSampleMenuChart = (chefId: string, dishIds: string[]): ChefMenuChart => {
+  const start = new Date();
+  start.setDate(start.getDate() + 1);
+  const end = new Date(start);
+  end.setDate(end.getDate() + 13);
+
+  const days = Array.from({ length: 14 }).map((_, index) => {
+    const date = new Date(start);
+    date.setDate(start.getDate() + index);
+    const dateStr = date.toISOString().split('T')[0];
+
+    const breakfastId = dishIds[index % dishIds.length];
+    const lunchId = dishIds[(index + 1) % dishIds.length];
+    const dinnerId = dishIds[(index + 2) % dishIds.length];
+
+    const altFor = (mealId: string) => dishIds.filter(id => id !== mealId).slice(0, 2);
+
+    return {
+      date: dateStr,
+      slots: {
+        breakfast: { mealId: breakfastId, alternativeMealIds: altFor(breakfastId) },
+        lunch: { mealId: lunchId, alternativeMealIds: altFor(lunchId) },
+        dinner: { mealId: dinnerId, alternativeMealIds: altFor(dinnerId) },
+      },
+    };
+  });
+
+  return {
+    id: `chart-${chefId}`,
+    chefId,
+    startDate: start.toISOString().split('T')[0],
+    endDate: end.toISOString().split('T')[0],
+    days,
+  };
+};
+
 // Sample chef with dishes
 const sampleChefs: Chef[] = [
   {
@@ -49,6 +86,7 @@ const sampleChefs: Chef[] = [
     rating: 4.8,
     totalOrders: 1250,
     createdAt: new Date().toISOString(),
+    menuCharts: [],
   },
   {
     id: 'chef-sample-2',
@@ -65,6 +103,7 @@ const sampleChefs: Chef[] = [
     rating: 4.6,
     totalOrders: 890,
     createdAt: new Date().toISOString(),
+    menuCharts: [],
   },
   {
     id: 'chef-sample-3',
@@ -81,6 +120,7 @@ const sampleChefs: Chef[] = [
     rating: 4.9,
     totalOrders: 650,
     createdAt: new Date().toISOString(),
+    menuCharts: [],
   },
 ];
 
@@ -184,6 +224,20 @@ const sampleDishes: Dish[] = [
   },
 ];
 
+// Attach sample menu charts for each chef based on their dishes
+const dishIdsByChef = sampleDishes.reduce<Record<string, string[]>>((acc, dish) => {
+  if (!acc[dish.chefId]) acc[dish.chefId] = [];
+  acc[dish.chefId].push(dish.id);
+  return acc;
+}, {});
+
+sampleChefs.forEach((chef) => {
+  const dishIds = dishIdsByChef[chef.id] || [];
+  if (dishIds.length > 0) {
+    chef.menuCharts = [buildSampleMenuChart(chef.id, dishIds)];
+  }
+});
+
 // Initial database structure
 const initialDatabase: Database = {
   users: [
@@ -223,6 +277,15 @@ export const readDatabase = (): Database => {
       // Ensure dishes array exists for backwards compatibility
       if (!parsed.dishes) {
         parsed.dishes = sampleDishes;
+      }
+      if (parsed.users) {
+        parsed.users = parsed.users.map((u: User) => {
+          if (u.role === 'chef') {
+            const chef = u as Chef;
+            return { ...chef, menuCharts: chef.menuCharts || [] };
+          }
+          return u;
+        });
       }
       return parsed;
     }
@@ -423,6 +486,16 @@ export const getPendingChefs = (): Chef[] => {
 export const getApprovedChefs = (): Chef[] => {
   const db = readDatabase();
   return db.users.filter(u => u.role === 'chef' && (u as Chef).status === 'approved') as Chef[];
+};
+
+export const getChefMenuCharts = (chefId: string): ChefMenuChart[] => {
+  const db = readDatabase();
+  const chef = db.users.find(u => u.id === chefId) as Chef | undefined;
+  return chef?.menuCharts || [];
+};
+
+export const setChefMenuCharts = (chefId: string, charts: ChefMenuChart[]): Chef | undefined => {
+  return updateUser(chefId, { menuCharts: charts } as Partial<Chef>) as Chef | undefined;
 };
 
 // Admin stats

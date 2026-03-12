@@ -1,4 +1,4 @@
-import { Link } from 'react-router-dom';
+﻿import { Link } from 'react-router-dom';
 import { Layout } from '@/components/layout/Layout';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
@@ -42,9 +42,9 @@ const Index = () => {
   ];
 
   const plans = [
-    { name: 'ESSENTIALS', price: '₹2,999', meals: '20 meals/month', popular: false },
-    { name: 'SIGNATURE', price: '₹4,499', meals: '30 meals/month', popular: true },
-    { name: 'COMPLETE', price: '₹5,999', meals: '60 meals/month', popular: false },
+    { name: 'ESSENTIALS', price: 'â‚¹2,999', meals: '20 meals/month', popular: false },
+    { name: 'SIGNATURE', price: 'â‚¹4,499', meals: '30 meals/month', popular: true },
+    { name: 'COMPLETE', price: 'â‚¹5,999', meals: '60 meals/month', popular: false },
   ];
 
   return (
@@ -100,9 +100,9 @@ const Index = () => {
             {/* CTA Buttons */}
             <div className="flex flex-col sm:flex-row gap-5 justify-center animate-slide-up animate-delay-400">
               <Button asChild size="lg" className="group relative overflow-hidden px-10 py-7 text-base font-chef tracking-wider rounded-full text-white" style={{ background: 'linear-gradient(135deg, #22c55e 0%, #16a34a 100%)', boxShadow: '0 10px 40px rgba(34,197,94,0.4)' }}>
-                <Link to="/dashboard">
+                <Link to="/register">
                   <span className="relative z-10 flex items-center">
-                    VIEW DASHBOARD
+                    GET STARTED
                     <ArrowRight className="w-5 h-5 ml-3 group-hover:translate-x-1 transition-transform" />
                   </span>
                   <div className="absolute inset-0 bg-gradient-to-r from-green-600 to-green-700 opacity-0 group-hover:opacity-100 transition-opacity" />
@@ -118,7 +118,7 @@ const Index = () => {
               {[
                 { value: '50+', label: 'CHEFS' },
                 { value: '1000+', label: 'MEALS DAILY' },
-                { value: '4.9★', label: 'RATING' },
+                { value: '4.9â˜…', label: 'RATING' },
               ].map((stat, index) => (
                 <div key={index} className="text-center">
                   <p className="text-3xl md:text-4xl font-bold text-green-600 mb-1">{stat.value}</p>
@@ -246,7 +246,7 @@ const Index = () => {
                 )}
                 <CardContent className="pt-12 pb-10 text-center relative">
                   <p className={`font-chef text-xs tracking-widest mb-6 ${plan.popular ? 'text-green-100' : 'text-gray-500'}`}>
-                    {plan.popular && '★ '}{plan.name}{plan.popular && ' ★'}
+                    {plan.popular && 'â˜… '}{plan.name}{plan.popular && ' â˜…'}
                   </p>
                   <p className={`text-6xl font-display font-bold mb-2 ${plan.popular ? 'text-white' : 'text-gray-800'}`}>
                     {plan.price}
@@ -362,3 +362,4 @@ const Index = () => {
 };
 
 export default Index;
+

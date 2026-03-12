@@ -99,6 +99,26 @@ export interface Chef extends User {
   rating?: number;
   totalOrders?: number;
   isDisabled?: boolean;
+  menuCharts?: ChefMenuChart[];
+}
+
+export interface ChefMenuSlot {
+  mealId: string;
+  alternativeMealIds?: string[];
+}
+
+export interface ChefMenuDay {
+  date: string;
+  slots: Partial<Record<MealSlot, ChefMenuSlot>>;
+}
+
+export interface ChefMenuChart {
+  id: string;
+  chefId: string;
+  startDate: string;
+  endDate: string;
+  imageUrl?: string;
+  days: ChefMenuDay[];
 }
 
 export interface DeliveryPartner extends User {
@@ -112,7 +132,8 @@ export interface Admin extends User {
 }
 
 export type PlanType = 'basic' | 'standard' | 'premium';
-export type MealTime = 'lunch' | 'dinner' | 'both';
+export type MealTime = 'breakfast' | 'lunch' | 'dinner' | 'both';
+export type MealSlot = 'breakfast' | 'lunch' | 'dinner';
 export type AddressType = 'home' | 'work';
 
 export interface Subscription {
@@ -121,6 +142,7 @@ export interface Subscription {
   customerName?: string;
   plan: PlanType;
   mealTime: MealTime;
+  mealSlots: MealSlot[];
   startDate: string;
   endDate?: string;
   status: 'active' | 'paused' | 'cancelled';
@@ -150,6 +172,7 @@ export interface DailyMeal {
   id: string;
   date: string;
   mealTime: MealTime;
+  mealSlot: MealSlot;
   subscriptionId: string;
   customerId: string;
   originalMealId: string;
@@ -162,6 +185,8 @@ export interface DailyMeal {
   deliveryPartnerId?: string;
   selectedCustomizations?: SelectedCustomization[];
   deliveryAddressType?: AddressType;
+  deliveryAddressOverride?: Address;
+  alternativeMealIds?: string[];
   isFinalized: boolean;
 }
 
@@ -216,6 +241,8 @@ export interface ApiResponse<T = unknown> {
   data?: T;
   error?: string;
   message?: string;
+  statusCode?: number;
+  nextAvailableAt?: string;
 }
 
 export interface Database {

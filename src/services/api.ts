@@ -17,6 +17,7 @@ import type {
   OrderStatusHistory,
   PlanType,
   MealTime,
+  MealSlot,
   AddressType,
   Dish,
   NutritionalInfo,
@@ -26,9 +27,106 @@ import type {
   UserPreferences,
   MealRecommendation,
   DietType,
-  HealthGoal
+  HealthGoal,
+  ChefMenuChart,
+  ChefMenuDay
 } from '@/types';
 import * as db from './db';
+
+const getMealSlotsForPlan = (plan: PlanType): MealSlot[] => {
+  switch (plan) {
+    case 'basic':
+      return ['lunch'];
+    case 'standard':
+      return ['lunch', 'dinner'];
+    case 'premium':
+      return ['breakfast', 'lunch', 'dinner'];
+    default:
+      return ['lunch'];
+  }
+};
+
+const getDefaultMealTimeForPlan = (plan: PlanType): MealTime => {
+  if (plan === 'basic') return 'lunch';
+  if (plan === 'standard') return 'both';
+  return 'both';
+};
+
+const getCutoffForDate = (dateStr: string): Date => {
+  const date = new Date(`${dateStr}T00:00:00`);
+  const cutoff = new Date(date);
+  cutoff.setDate(date.getDate() - 1);
+  cutoff.setHours(20, 0, 0, 0);
+  return cutoff;
+};
+
+const isBeforeMealCutoff = (dateStr: string): boolean => {
+  const now = new Date();
+  return now.getTime() < getCutoffForDate(dateStr).getTime();
+};
+
+const lockResponse = (dateStr: string, message: string): ApiResponse<never> => ({
+  success: false,
+  error: message,
+  statusCode: 423,
+  nextAvailableAt: getCutoffForDate(dateStr).toISOString(),
+});
+
+const getChefMenuDayForDate = (charts: ChefMenuChart[], dateStr: string): ChefMenuDay | undefined => {
+  return charts
+    .flatMap(chart => chart.days)
+    .find(day => day.date === dateStr);
+};
+
+const slotIndexMap: Record<MealSlot, number> = {
+  breakfast: 0,
+  lunch: 1,
+  dinner: 2,
+};
+
+const pickDishForSlot = (dishPool: Dish[], dateStr: string, slot: MealSlot): Dish => {
+  const date = new Date(dateStr);
+  const index = (date.getDate() + slotIndexMap[slot]) % dishPool.length;
+  return dishPool[index];
+};
+
+const resolveSlotMeal = (
+  chef: Chef | null,
+  dateStr: string,
+  slot: MealSlot,
+  dishPool: Dish[],
+  fallbackMeals: Meal[]
+): { mealId: string; mealName: string; dishId?: string; alternativeMealIds?: string[] } => {
+  if (chef?.menuCharts?.length) {
+    const menuDay = getChefMenuDayForDate(chef.menuCharts, dateStr);
+    const menuSlot = menuDay?.slots?.[slot];
+    if (menuSlot?.mealId) {
+      const dish = db.findDishById(menuSlot.mealId);
+      const meal = db.findMealById(menuSlot.mealId);
+      return {
+        mealId: menuSlot.mealId,
+        dishId: dish?.id,
+        mealName: dish?.name || meal?.name || 'Unknown meal',
+        alternativeMealIds: menuSlot.alternativeMealIds?.filter(id => id !== menuSlot.mealId),
+      };
+    }
+  }
+
+  if (dishPool.length > 0) {
+    const dish = pickDishForSlot(dishPool, dateStr, slot);
+    return {
+      mealId: dish.id,
+      dishId: dish.id,
+      mealName: dish.name,
+    };
+  }
+
+  const fallback = fallbackMeals[Math.floor(Math.random() * fallbackMeals.length)];
+  return {
+    mealId: fallback.id,
+    mealName: fallback.name,
+  };
+};
 
 // ========================================
 // AUTH ENDPOINTS (POST /api/auth/*)
@@ -105,7 +203,6 @@ export const login = (email: string, password: string): ApiResponse<User> => {
 export const subscribe = (
   customerId: string,
   plan: PlanType,
-  mealTime: MealTime,
   address: Address,
   addressType: AddressType = 'home',
   selectedChefId?: string
@@ -121,11 +218,15 @@ export const subscribe = (
     return { success: false, error: 'Already have an active subscription' };
   }
 
+  const mealSlots = getMealSlotsForPlan(plan);
+  const mealTime = getDefaultMealTimeForPlan(plan);
+
   const subscription: Subscription = {
     id: db.generateId('sub'),
     customerId,
     plan,
     mealTime,
+    mealSlots,
     address,
     activeAddressType: addressType,
     selectedChefId,
@@ -141,6 +242,7 @@ export const subscribe = (
   }
 
   // Get chef's dishes or fall back to sample meals
+  const chef = selectedChefId ? (db.findUserById(selectedChefId) as Chef | undefined) : undefined;
   const chefDishes = selectedChefId ? db.getDishesByChefId(selectedChefId) : [];
   const meals = db.getAllMeals();
 
@@ -149,57 +251,50 @@ export const subscribe = (
     const date = new Date();
     date.setDate(date.getDate() + i);
     const dateStr = date.toISOString().split('T')[0];
-    
-    let mealId: string;
-    let mealName: string;
-    let dishId: string | undefined;
 
-    if (chefDishes.length > 0) {
-      const randomDish = chefDishes[Math.floor(Math.random() * chefDishes.length)];
-      dishId = randomDish.id;
-      mealId = randomDish.id;
-      mealName = randomDish.name;
-    } else {
-      const randomMeal = meals[Math.floor(Math.random() * meals.length)];
-      mealId = randomMeal.id;
-      mealName = randomMeal.name;
-    }
-    
-    const dailyMeal: DailyMeal = {
-      id: db.generateId('dm'),
-      date: dateStr,
-      mealTime,
-      subscriptionId: subscription.id,
-      customerId,
-      originalMealId: mealId,
-      currentMealId: mealId,
-      originalDishId: dishId,
-      currentDishId: dishId,
-      isSkipped: false,
-      isSwapped: false,
-      status: 'scheduled',
-      deliveryAddressType: addressType,
-      isFinalized: false,
-    };
-    db.createDailyMeal(dailyMeal);
+    mealSlots.forEach((slot) => {
+      const resolved = resolveSlotMeal(chef || null, dateStr, slot, chefDishes, meals);
 
-    // Create order
-    const order: Order = {
-      id: db.generateId('ord'),
-      dailyMealId: dailyMeal.id,
-      customerId,
-      chefId: selectedChefId,
-      mealId,
-      mealName,
-      dishId,
-      customerName: user.name,
-      deliveryAddress: address,
-      status: 'scheduled',
-      statusHistory: [{ status: 'scheduled', timestamp: new Date().toISOString() }],
-      date: dateStr,
-      mealTime,
-    };
-    db.createOrder(order);
+      const dailyMeal: DailyMeal = {
+        id: db.generateId('dm'),
+        date: dateStr,
+        mealTime: slot,
+        mealSlot: slot,
+        subscriptionId: subscription.id,
+        customerId,
+        originalMealId: resolved.mealId,
+        currentMealId: resolved.mealId,
+        originalDishId: resolved.dishId,
+        currentDishId: resolved.dishId,
+        isSkipped: false,
+        isSwapped: false,
+        status: 'scheduled',
+        deliveryAddressType: addressType,
+        deliveryAddressOverride: undefined,
+        alternativeMealIds: resolved.alternativeMealIds,
+        isFinalized: false,
+      };
+      db.createDailyMeal(dailyMeal);
+
+      // Create order
+      const order: Order = {
+        id: db.generateId('ord'),
+        dailyMealId: dailyMeal.id,
+        customerId,
+        chefId: selectedChefId,
+        mealId: resolved.mealId,
+        mealName: resolved.mealName,
+        dishId: resolved.dishId,
+        customerName: user.name,
+        deliveryAddress: address,
+        deliveryAddressType: addressType,
+        status: 'scheduled',
+        statusHistory: [{ status: 'scheduled', timestamp: new Date().toISOString() }],
+        date: dateStr,
+        mealTime: slot,
+      };
+      db.createOrder(order);
+    });
   }
 
   return { 
@@ -214,16 +309,15 @@ export const subscribe = (
  * Skip tomorrow's meal (only before 8 PM)
  */
 export const skipMeal = (customerId: string, dailyMealId: string): ApiResponse<DailyMeal> => {
-  // Check time cutoff
-  if (!db.isBeforeCutoff()) {
-    return { success: false, error: 'Meal locked. Skip/swap allowed only before 8 PM.' };
-  }
-
-  const dailyMeals = db.findDailyMealsByCustomerId(customerId, db.getTomorrowDate());
-  const meal = dailyMeals.find(dm => dm.id === dailyMealId);
+  const dbData = db.readDatabase();
+  const meal = dbData.dailyMeals.find(dm => dm.id === dailyMealId && dm.customerId === customerId);
 
   if (!meal) {
-    return { success: false, error: 'Meal not found for tomorrow' };
+    return { success: false, error: 'Meal not found' };
+  }
+
+  if (!isBeforeMealCutoff(meal.date)) {
+    return lockResponse(meal.date, 'Meal locked. Skip allowed only before 8 PM the day before delivery.');
   }
 
   if (meal.isFinalized) {
@@ -237,7 +331,6 @@ export const skipMeal = (customerId: string, dailyMealId: string): ApiResponse<D
   const updated = db.updateDailyMeal(dailyMealId, { isSkipped: true });
   
   // Update corresponding order
-  const dbData = db.readDatabase();
   const order = dbData.orders.find(o => o.dailyMealId === dailyMealId);
   if (order) {
     db.updateOrder(order.id, { status: 'pending' });
@@ -255,15 +348,15 @@ export const skipMeal = (customerId: string, dailyMealId: string): ApiResponse<D
  * Reverse a skipped meal (only before 8 PM)
  */
 export const unskipMeal = (customerId: string, dailyMealId: string): ApiResponse<DailyMeal> => {
-  if (!db.isBeforeCutoff()) {
-    return { success: false, error: 'Meal locked. Changes allowed only before 8 PM.' };
-  }
-
-  const dailyMeals = db.findDailyMealsByCustomerId(customerId, db.getTomorrowDate());
-  const meal = dailyMeals.find(dm => dm.id === dailyMealId);
+  const dbData = db.readDatabase();
+  const meal = dbData.dailyMeals.find(dm => dm.id === dailyMealId && dm.customerId === customerId);
 
   if (!meal) {
-    return { success: false, error: 'Meal not found for tomorrow' };
+    return { success: false, error: 'Meal not found' };
+  }
+
+  if (!isBeforeMealCutoff(meal.date)) {
+    return lockResponse(meal.date, 'Meal locked. Changes allowed only before 8 PM the day before delivery.');
   }
 
   if (meal.isFinalized) {
@@ -293,16 +386,15 @@ export const swapMeal = (
   newMealId: string,
   selectedCustomizations?: SelectedCustomization[]
 ): ApiResponse<DailyMeal> => {
-  // Check time cutoff
-  if (!db.isBeforeCutoff()) {
-    return { success: false, error: 'Meal locked. Skip/swap allowed only before 8 PM.' };
-  }
-
-  const dailyMeals = db.findDailyMealsByCustomerId(customerId, db.getTomorrowDate());
-  const meal = dailyMeals.find(dm => dm.id === dailyMealId);
+  const dbData = db.readDatabase();
+  const meal = dbData.dailyMeals.find(dm => dm.id === dailyMealId && dm.customerId === customerId);
 
   if (!meal) {
-    return { success: false, error: 'Meal not found for tomorrow' };
+    return { success: false, error: 'Meal not found' };
+  }
+
+  if (!isBeforeMealCutoff(meal.date)) {
+    return lockResponse(meal.date, 'Meal locked. Skip/swap allowed only before 8 PM the day before delivery.');
   }
 
   if (meal.isFinalized) {
@@ -334,7 +426,6 @@ export const swapMeal = (
   const updated = db.updateDailyMeal(dailyMealId, updates);
 
   // Update corresponding order
-  const dbData = db.readDatabase();
   const order = dbData.orders.find(o => o.dailyMealId === dailyMealId);
   if (order) {
     db.updateOrder(order.id, { 
@@ -361,8 +452,9 @@ export const updateAddress = (
   address: Address,
   addressType: AddressType
 ): ApiResponse<Subscription> => {
-  if (!db.isBeforeCutoff()) {
-    return { success: false, error: 'Address change locked after 8 PM.' };
+  const tomorrow = db.getTomorrowDate();
+  if (!isBeforeMealCutoff(tomorrow)) {
+    return lockResponse(tomorrow, 'Address change locked after 8 PM the day before delivery.');
   }
 
   const subscription = db.findSubscriptionByCustomerId(customerId);
@@ -377,7 +469,6 @@ export const updateAddress = (
 
   // Update tomorrow's orders
   const dbData = db.readDatabase();
-  const tomorrow = db.getTomorrowDate();
   dbData.orders.forEach(order => {
     if (order.customerId === customerId && order.date === tomorrow) {
       db.updateOrder(order.id, { deliveryAddress: address });
@@ -399,8 +490,9 @@ export const switchDeliveryAddress = (
   customerId: string,
   addressType: AddressType
 ): ApiResponse<Subscription> => {
-  if (!db.isBeforeCutoff()) {
-    return { success: false, error: 'Address change locked after 8 PM.' };
+  const tomorrow = db.getTomorrowDate();
+  if (!isBeforeMealCutoff(tomorrow)) {
+    return lockResponse(tomorrow, 'Address change locked after 8 PM the day before delivery.');
   }
 
   const user = db.findUserById(customerId) as Customer;
@@ -425,7 +517,6 @@ export const switchDeliveryAddress = (
 
   // Update tomorrow's daily meal and order
   const dbData = db.readDatabase();
-  const tomorrow = db.getTomorrowDate();
   
   dbData.dailyMeals.forEach(dm => {
     if (dm.customerId === customerId && dm.date === tomorrow && !dm.isFinalized) {
@@ -443,6 +534,71 @@ export const switchDeliveryAddress = (
     success: true, 
     data: updated!, 
     message: `Delivery address switched to ${addressType}` 
+  };
+};
+
+/**
+ * PUT /api/customer/meal-address
+ * Update delivery address for a specific meal (per-meal cutoff)
+ */
+export const updateMealAddress = (
+  customerId: string,
+  dailyMealId: string,
+  addressType: AddressType | 'custom',
+  customAddress?: Address
+): ApiResponse<DailyMeal> => {
+  const dbData = db.readDatabase();
+  const meal = dbData.dailyMeals.find(dm => dm.id === dailyMealId && dm.customerId === customerId);
+  if (!meal) {
+    return { success: false, error: 'Meal not found' };
+  }
+
+  if (!isBeforeMealCutoff(meal.date)) {
+    return lockResponse(meal.date, 'Address change locked after 8 PM the day before delivery.');
+  }
+
+  const user = db.findUserById(customerId) as Customer;
+  if (!user || user.role !== 'customer') {
+    return { success: false, error: 'Customer not found' };
+  }
+
+  let address: Address | undefined;
+  let deliveryAddressType: AddressType | undefined = meal.deliveryAddressType;
+  let deliveryAddressOverride: Address | undefined;
+
+  if (addressType === 'custom') {
+    if (!customAddress?.street || !customAddress.city || !customAddress.state || !customAddress.zipCode) {
+      return { success: false, error: 'Custom address is incomplete' };
+    }
+    address = customAddress;
+    deliveryAddressOverride = customAddress;
+    deliveryAddressType = undefined;
+  } else {
+    address = addressType === 'home' ? user.homeAddress : user.workAddress;
+    if (!address) {
+      return { success: false, error: `No ${addressType} address configured` };
+    }
+    deliveryAddressType = addressType;
+    deliveryAddressOverride = undefined;
+  }
+
+  const updated = db.updateDailyMeal(dailyMealId, {
+    deliveryAddressType,
+    deliveryAddressOverride,
+  });
+
+  const order = dbData.orders.find(o => o.dailyMealId === dailyMealId);
+  if (order) {
+    db.updateOrder(order.id, {
+      deliveryAddress: address!,
+      deliveryAddressType: deliveryAddressType,
+    });
+  }
+
+  return {
+    success: true,
+    data: updated!,
+    message: 'Meal address updated',
   };
 };
 
@@ -676,6 +832,57 @@ export const deleteDish = (chefId: string, dishId: string): ApiResponse<boolean>
 export const getChefDishes = (chefId: string): ApiResponse<Dish[]> => {
   const dishes = db.getDishesByChefId(chefId);
   return { success: true, data: dishes };
+};
+
+/**
+ * GET /api/chef/:id/menu-charts
+ * Get chef menu charts (optionally filtered by date range)
+ */
+export const getChefMenuCharts = (
+  chefId: string,
+  startDate?: string,
+  endDate?: string
+): ApiResponse<ChefMenuChart[]> => {
+  const chef = db.findUserById(chefId) as Chef;
+  if (!chef || chef.role !== 'chef') {
+    return { success: false, error: 'Chef not found' };
+  }
+
+  let charts = chef.menuCharts || [];
+  if (startDate || endDate) {
+    charts = charts.map(chart => ({
+      ...chart,
+      days: chart.days.filter(day => {
+        if (startDate && day.date < startDate) return false;
+        if (endDate && day.date > endDate) return false;
+        return true;
+      }),
+    }));
+  }
+
+  return { success: true, data: charts };
+};
+
+/**
+ * PUT /api/chef/:id/menu-charts
+ * Upsert a chef menu chart (manual entry, optional image)
+ */
+export const upsertChefMenuChart = (
+  chefId: string,
+  chart: ChefMenuChart
+): ApiResponse<ChefMenuChart[]> => {
+  const chef = db.findUserById(chefId) as Chef;
+  if (!chef || chef.role !== 'chef') {
+    return { success: false, error: 'Chef not found' };
+  }
+
+  const charts = chef.menuCharts || [];
+  const nextCharts = charts.some(c => c.id === chart.id)
+    ? charts.map(c => (c.id === chart.id ? chart : c))
+    : [...charts, chart];
+
+  db.setChefMenuCharts(chefId, nextCharts);
+  return { success: true, data: nextCharts, message: 'Menu chart saved' };
 };
 
 /**
@@ -1486,7 +1693,6 @@ export const subscribeWithChef = (
   chefId: string,
   selectedDishIds: string[],
   plan: PlanType,
-  mealTime: MealTime,
   homeAddress: Address,
   workAddress?: Address
 ): ApiResponse<Subscription> => {
@@ -1517,7 +1723,8 @@ export const subscribeWithChef = (
     id: db.generateId('sub'),
     customerId,
     plan,
-    mealTime,
+    mealTime: getDefaultMealTimeForPlan(plan),
+    mealSlots: getMealSlotsForPlan(plan),
     address: homeAddress,
     activeAddressType: 'home',
     selectedChefId: chefId,
@@ -1536,52 +1743,58 @@ export const subscribeWithChef = (
     return { success: false, error: 'No dishes available from this chef' };
   }
 
+  const mealSlots = getMealSlotsForPlan(plan);
+
   // Create daily meals for next 7 days
   for (let i = 1; i <= 7; i++) {
     const date = new Date();
     date.setDate(date.getDate() + i);
     const dateStr = date.toISOString().split('T')[0];
-    
-    // Rotate through selected dishes
-    const dish = chefDishes[(i - 1) % chefDishes.length];
-    
-    const dailyMeal: DailyMeal = {
-      id: db.generateId('dm'),
-      date: dateStr,
-      mealTime,
-      subscriptionId: subscription.id,
-      customerId,
-      originalMealId: dish.id,
-      currentMealId: dish.id,
-      originalDishId: dish.id,
-      currentDishId: dish.id,
-      isSkipped: false,
-      isSwapped: false,
-      status: 'scheduled',
-      deliveryAddressType: 'home',
-      isFinalized: false,
-    };
-    db.createDailyMeal(dailyMeal);
 
-    // Create order with nutrition snapshot
-    const order: Order = {
-      id: db.generateId('ord'),
-      dailyMealId: dailyMeal.id,
-      customerId,
-      chefId,
-      chefName: chef.name,
-      mealId: dish.id,
-      mealName: dish.name,
-      dishId: dish.id,
-      customerName: user.name,
-      deliveryAddress: homeAddress,
-      deliveryAddressType: 'home',
-      status: 'scheduled',
-      statusHistory: [{ status: 'scheduled', timestamp: new Date().toISOString() }],
-      date: dateStr,
-      mealTime,
-    };
-    db.createOrder(order);
+    mealSlots.forEach((slot) => {
+      const resolved = resolveSlotMeal(chef, dateStr, slot, chefDishes, db.getAllMeals());
+
+      const dailyMeal: DailyMeal = {
+        id: db.generateId('dm'),
+        date: dateStr,
+        mealTime: slot,
+        mealSlot: slot,
+        subscriptionId: subscription.id,
+        customerId,
+        originalMealId: resolved.mealId,
+        currentMealId: resolved.mealId,
+        originalDishId: resolved.dishId,
+        currentDishId: resolved.dishId,
+        isSkipped: false,
+        isSwapped: false,
+        status: 'scheduled',
+        deliveryAddressType: 'home',
+        deliveryAddressOverride: undefined,
+        alternativeMealIds: resolved.alternativeMealIds,
+        isFinalized: false,
+      };
+      db.createDailyMeal(dailyMeal);
+
+      // Create order with nutrition snapshot
+      const order: Order = {
+        id: db.generateId('ord'),
+        dailyMealId: dailyMeal.id,
+        customerId,
+        chefId,
+        chefName: chef.name,
+        mealId: resolved.mealId,
+        mealName: resolved.mealName,
+        dishId: resolved.dishId,
+        customerName: user.name,
+        deliveryAddress: homeAddress,
+        deliveryAddressType: 'home',
+        status: 'scheduled',
+        statusHistory: [{ status: 'scheduled', timestamp: new Date().toISOString() }],
+        date: dateStr,
+        mealTime: slot,
+      };
+      db.createOrder(order);
+    });
   }
 
   return { 

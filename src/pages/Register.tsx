@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
 import * as api from '@/services/api';
@@ -9,10 +9,12 @@ import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { useToast } from '@/hooks/use-toast';
 import { User, ChefHat, Eye, EyeOff, Home, Briefcase, MapPin, ChevronRight, ChevronLeft } from 'lucide-react';
-import type { Address } from '@/types';
+import type { Address, PlanType } from '@/types';
 
 type RegistrationType = 'customer' | 'chef';
-type RegistrationStep = 'basic' | 'addresses' | 'kitchen';
+type RegistrationStep = 'basic' | 'addresses' | 'chef' | 'payment' | 'kitchen';
+
+type ChefWithData = ReturnType<typeof api.getApprovedChefsWithRatings>['data'] extends (infer T)[] | undefined ? T : never;
 
 const emptyAddress: Address = {
   street: '',
@@ -86,6 +88,12 @@ export const Register = () => {
   // Customer addresses
   const [homeAddress, setHomeAddress] = useState<Address>({ ...emptyAddress });
   const [workAddress, setWorkAddress] = useState<Address>({ ...emptyAddress });
+
+  const [chefs, setChefs] = useState<ChefWithData[]>([]);
+  const [loadingChefs, setLoadingChefs] = useState(false);
+  const [selectedChefId, setSelectedChefId] = useState<string | null>(null);
+  const [selectedPlan, setSelectedPlan] = useState<PlanType>('standard');
+  const [paymentMethod, setPaymentMethod] = useState<'upi' | 'debit' | 'credit' | 'netbanking'>('upi');
   
   // Chef info
   const [specialty, setSpecialty] = useState('');
@@ -100,6 +108,30 @@ export const Register = () => {
   const navigate = useNavigate();
   const { toast } = useToast();
 
+  const planOptions: { id: PlanType; name: string; slots: string; price: string }[] = [
+    { id: 'basic', name: 'Basic', slots: 'Lunch', price: '₹2,999' },
+    { id: 'standard', name: 'Standard', slots: 'Lunch + Dinner', price: '₹4,499' },
+    { id: 'premium', name: 'Premium', slots: 'Breakfast + Lunch + Dinner', price: '₹5,999' },
+  ];
+
+  const selectedChef = chefs.find((chef) => chef.id === selectedChefId) || null;
+  const selectedPlanOption = planOptions.find((plan) => plan.id === selectedPlan) || planOptions[0];
+
+  const loadChefs = () => {
+    setLoadingChefs(true);
+    const response = api.getApprovedChefsWithRatings();
+    if (response.success && response.data) {
+      setChefs(response.data);
+    }
+    setLoadingChefs(false);
+  };
+
+  useEffect(() => {
+    if (type === 'customer' && step === 'chef') {
+      loadChefs();
+    }
+  }, [type, step]);
+
   const handleBasicSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (type === 'customer') {
@@ -109,49 +141,87 @@ export const Register = () => {
     }
   };
 
-  const handleFinalSubmit = async (e: React.FormEvent) => {
+  const handleCustomerAddressSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!homeAddress.street) {
+      toast({ title: 'Home address required', description: 'Please add a home address to continue.', variant: 'destructive' });
+      return;
+    }
+    setStep('chef');
+  };
+
+  const handleChefRegistrationSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setIsLoading(true);
 
     try {
-      if (type === 'customer') {
-        const response = api.registerCustomer(
-          email, 
-          password, 
-          name, 
-          phone, 
-          homeAddress.street ? homeAddress : undefined,
-          workAddress.street ? workAddress : undefined
-        );
-        if (response.success && response.data) {
-          login(response.data);
-          toast({ title: 'Welcome to ZYNK!', description: 'Your account has been created.' });
-          navigate('/dashboard');
-        } else {
-          toast({ title: 'Error', description: response.error, variant: 'destructive' });
-        }
+      const response = api.registerChef(
+        email, 
+        password, 
+        name, 
+        specialty,
+        bio,
+        kitchenLocation.street ? kitchenLocation : undefined,
+        serviceArea,
+        deliverySlots
+      );
+      if (response.success && response.data) {
+        login(response.data);
+        toast({ 
+          title: 'Registration Complete!', 
+          description: 'You can now add your dishes. Orders will appear once you\'re approved.' 
+        });
+        navigate('/dashboard');
       } else {
-        const response = api.registerChef(
-          email, 
-          password, 
-          name, 
-          specialty,
-          bio,
-          kitchenLocation.street ? kitchenLocation : undefined,
-          serviceArea,
-          deliverySlots
-        );
-        if (response.success && response.data) {
-          login(response.data);
-          toast({ 
-            title: 'Registration Complete!', 
-            description: 'You can now add your dishes. Orders will appear once you\'re approved.' 
-          });
-          navigate('/dashboard');
-        } else {
-          toast({ title: 'Error', description: response.error, variant: 'destructive' });
-        }
+        toast({ title: 'Error', description: response.error, variant: 'destructive' });
       }
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const handlePaymentSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!selectedChefId) {
+      toast({ title: 'Select a chef', description: 'Choose a chef before continuing to payment.', variant: 'destructive' });
+      return;
+    }
+
+    setIsLoading(true);
+
+    try {
+      const registerResponse = api.registerCustomer(
+        email, 
+        password, 
+        name, 
+        phone, 
+        homeAddress.street ? homeAddress : undefined,
+        workAddress.street ? workAddress : undefined
+      );
+
+      if (!registerResponse.success || !registerResponse.data) {
+        toast({ title: 'Error', description: registerResponse.error, variant: 'destructive' });
+        return;
+      }
+
+      login(registerResponse.data);
+
+      const subscriptionResponse = api.subscribeWithChef(
+        registerResponse.data.id,
+        selectedChefId,
+        [],
+        selectedPlan,
+        homeAddress,
+        workAddress.street ? workAddress : undefined
+      );
+
+      if (!subscriptionResponse.success) {
+        toast({ title: 'Error', description: subscriptionResponse.error, variant: 'destructive' });
+        return;
+      }
+
+      toast({ title: 'Payment successful', description: 'Subscription activated.' });
+      navigate('/dashboard');
     } finally {
       setIsLoading(false);
     }
@@ -167,6 +237,21 @@ export const Register = () => {
     }
   };
 
+  const getMealName = (chef: ChefWithData, mealId?: string) => {
+    if (!mealId) return '—';
+    const dish = chef.dishes.find(d => d.id === mealId);
+    return dish?.name || 'Meal';
+  };
+
+  const getMenuChartDays = (chef: ChefWithData) => {
+    const chart = chef.menuCharts?.[0];
+    if (!chart) return [];
+    const today = new Date().toISOString().split('T')[0];
+    return chart.days.filter(day => day.date >= today).slice(0, 7);
+  };
+
+  const menuChartDays = selectedChef ? getMenuChartDays(selectedChef) : [];
+
   return (
     <Layout>
       <div className="min-h-[80vh] flex items-center justify-center bg-gradient-to-b from-secondary to-background py-12 px-4">
@@ -175,17 +260,23 @@ export const Register = () => {
             <p className="font-chef text-xs tracking-widest text-green-500 mb-4">
               {step === 'basic' && 'JOIN THE KITCHEN'}
               {step === 'addresses' && 'DELIVERY SETUP'}
+              {step === 'chef' && 'CHOOSE YOUR CHEF'}
+              {step === 'payment' && 'PAYMENT'}
               {step === 'kitchen' && 'CHEF PROFILE'}
             </p>
             <h1 className="font-display text-3xl font-bold text-charcoal">
               {step === 'basic' && 'Create Account'}
               {step === 'addresses' && 'Delivery Addresses'}
+              {step === 'chef' && 'Select a Chef'}
+              {step === 'payment' && 'Complete Payment'}
               {step === 'kitchen' && 'Kitchen Setup'}
             </h1>
             <div className="w-12 h-0.5 bg-charcoal mx-auto mt-4" />
             <p className="mt-4 text-muted-foreground">
               {step === 'basic' && 'Join ZYNK and experience culinary excellence'}
               {step === 'addresses' && 'Add your locations for seamless delivery'}
+              {step === 'chef' && 'Pick a chef, review their menu chart, and choose your plan'}
+              {step === 'payment' && 'Securely complete payment to activate your subscription'}
               {step === 'kitchen' && 'Tell us about your culinary expertise'}
             </p>
           </div>
@@ -304,7 +395,7 @@ export const Register = () => {
               )}
 
             {step === 'addresses' && (
-              <form onSubmit={handleFinalSubmit} className="space-y-5">
+              <form onSubmit={handleCustomerAddressSubmit} className="space-y-5">
                 <AddressForm 
                   address={homeAddress} 
                   setAddress={setHomeAddress} 
@@ -335,8 +426,156 @@ export const Register = () => {
               </form>
             )}
 
+            {step === 'chef' && (
+              <div className="space-y-5">
+                <div className="space-y-3">
+                  {loadingChefs ? (
+                    <div className="text-sm text-muted-foreground">Loading chefs...</div>
+                  ) : chefs.length === 0 ? (
+                    <div className="text-sm text-muted-foreground">No approved chefs available right now.</div>
+                  ) : (
+                    chefs.map((chef) => (
+                      <button
+                        key={chef.id}
+                        type="button"
+                        onClick={() => setSelectedChefId(chef.id)}
+                        className={`w-full text-left border rounded-sm p-4 transition-colors ${
+                          selectedChefId === chef.id ? 'border-green-500 bg-green-50' : 'border-gray-200 bg-white'
+                        }`}
+                      >
+                        <div className="flex items-start justify-between">
+                          <div>
+                            <p className="font-display text-lg font-bold text-charcoal">{chef.name}</p>
+                            <p className="text-sm text-muted-foreground">{chef.specialty}</p>
+                            <p className="text-xs text-muted-foreground mt-1">{chef.serviceArea}</p>
+                          </div>
+                          <div className="text-right">
+                            <p className="text-sm font-medium text-charcoal">{chef.avgRating?.toFixed(1) || 'New'}</p>
+                            <p className="text-xs text-muted-foreground">{chef.reviewCount || 0} reviews</p>
+                          </div>
+                        </div>
+                      </button>
+                    ))
+                  )}
+                </div>
+
+                {selectedChef && (
+                  <div className="space-y-4">
+                    <div className="rounded-sm border border-gray-200 p-4">
+                      <p className="font-chef text-xs tracking-wider text-charcoal mb-3">MENU CHART</p>
+                      {menuChartDays.length === 0 ? (
+                        <p className="text-sm text-muted-foreground">Menu chart not uploaded yet.</p>
+                      ) : (
+                        <div className="space-y-2">
+                          {menuChartDays.map((day) => {
+                            const slots = day.slots || {};
+                            return (
+                              <div key={day.date} className="rounded-sm border border-gray-200 px-3 py-2">
+                                <p className="text-xs font-medium text-charcoal">{day.date}</p>
+                                <div className="text-xs text-muted-foreground mt-1 space-y-1">
+                                  <div>Breakfast: {getMealName(selectedChef, slots.breakfast?.mealId)}</div>
+                                  <div>Lunch: {getMealName(selectedChef, slots.lunch?.mealId)}</div>
+                                  <div>Dinner: {getMealName(selectedChef, slots.dinner?.mealId)}</div>
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </div>
+
+                    <div className="rounded-sm border border-gray-200 p-4">
+                      <p className="font-chef text-xs tracking-wider text-charcoal mb-3">CHOOSE PLAN</p>
+                      <div className="grid gap-3">
+                        {planOptions.map((plan) => (
+                          <div key={plan.id} className="flex items-center justify-between rounded-sm border border-gray-200 px-3 py-2">
+                            <div>
+                              <p className="font-medium text-charcoal">{plan.name}</p>
+                              <p className="text-xs text-muted-foreground">{plan.slots}</p>
+                            </div>
+                            <div className="text-right">
+                              <p className="text-sm font-semibold text-primary">{plan.price}</p>
+                              <Button
+                                type="button"
+                                size="sm"
+                                className="mt-2"
+                                onClick={() => {
+                                  setSelectedPlan(plan.id);
+                                  setStep('payment');
+                                }}
+                              >
+                                Select
+                              </Button>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                <div className="flex gap-3 pt-4">
+                  <Button type="button" variant="outline" onClick={() => setStep('addresses')} className="flex-1 font-chef tracking-wider text-xs">
+                    <ChevronLeft className="w-4 h-4 mr-2" />
+                    BACK
+                  </Button>
+                </div>
+              </div>
+            )}
+
+            {step === 'payment' && (
+              <form onSubmit={handlePaymentSubmit} className="space-y-5">
+                <div className="rounded-sm border border-gray-200 p-4 space-y-2">
+                  <div>
+                    <p className="text-xs text-muted-foreground">Selected Chef</p>
+                    <p className="font-medium text-charcoal">{selectedChef?.name || 'Not selected'}</p>
+                  </div>
+                  <div>
+                    <p className="text-xs text-muted-foreground">Plan</p>
+                    <p className="font-medium text-charcoal">{selectedPlanOption.name} • {selectedPlanOption.slots}</p>
+                  </div>
+                  <div>
+                    <p className="text-xs text-muted-foreground">Monthly Price</p>
+                    <p className="text-lg font-bold text-primary">{selectedPlanOption.price}</p>
+                  </div>
+                </div>
+
+                <div className="space-y-2">
+                  <Label className="font-chef text-xs tracking-wider text-charcoal">PAYMENT METHOD</Label>
+                  <div className="grid grid-cols-2 gap-2">
+                    {[
+                      { id: 'upi', label: 'UPI' },
+                      { id: 'debit', label: 'Debit Card' },
+                      { id: 'credit', label: 'Credit Card' },
+                      { id: 'netbanking', label: 'Net Banking' },
+                    ].map((method) => (
+                      <Button
+                        key={method.id}
+                        type="button"
+                        variant={paymentMethod === method.id ? 'default' : 'outline'}
+                        onClick={() => setPaymentMethod(method.id as typeof paymentMethod)}
+                        className="justify-start"
+                      >
+                        {method.label}
+                      </Button>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="flex gap-3 pt-4">
+                  <Button type="button" variant="outline" onClick={() => setStep('chef')} className="flex-1 font-chef tracking-wider text-xs">
+                    <ChevronLeft className="w-4 h-4 mr-2" />
+                    BACK
+                  </Button>
+                  <Button type="submit" className="flex-1 btn-green" disabled={isLoading}>
+                    {isLoading ? 'PROCESSING...' : 'PAY & ACTIVATE'}
+                  </Button>
+                </div>
+              </form>
+            )}
+
             {step === 'kitchen' && (
-              <form onSubmit={handleFinalSubmit} className="space-y-5">
+              <form onSubmit={handleChefRegistrationSubmit} className="space-y-5">
                 <div className="space-y-2">
                   <Label htmlFor="bio" className="font-chef text-xs tracking-wider text-charcoal">BIO (OPTIONAL)</Label>
                   <Input

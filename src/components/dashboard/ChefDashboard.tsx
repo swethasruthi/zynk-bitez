@@ -8,7 +8,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { useToast } from '@/hooks/use-toast';
 import { ChefHat, Clock, MapPin, UtensilsCrossed, AlertTriangle, Plus, Leaf, Drumstick, Flame, Dumbbell } from 'lucide-react';
-import type { Order, Chef, Dish, NutritionalInfo, CustomizationOption } from '@/types';
+import type { Order, Chef, Dish, NutritionalInfo, CustomizationOption, ChefMenuChart, ChefMenuDay, MealSlot } from '@/types';
 
 export const ChefDashboard = () => {
   const { user } = useAuth();
@@ -27,8 +27,15 @@ export const ChefDashboard = () => {
   const [customOptions, setCustomOptions] = useState<string[]>([]);
   const [newOption, setNewOption] = useState('');
 
+  const [menuChart, setMenuChart] = useState<ChefMenuChart | null>(null);
+  const [menuStartDate, setMenuStartDate] = useState<string>(new Date().toISOString().split('T')[0]);
+  const [menuDuration, setMenuDuration] = useState<7 | 14>(7);
+  const [menuDays, setMenuDays] = useState<ChefMenuDay[]>([]);
+  const [menuImageUrl, setMenuImageUrl] = useState<string | undefined>(undefined);
+
   const chef = user as Chef;
   const isApproved = chef?.status === 'approved';
+  const slotOptions: MealSlot[] = ['breakfast', 'lunch', 'dinner'];
 
   useEffect(() => {
     if (user) {
@@ -49,9 +56,40 @@ export const ChefDashboard = () => {
     if (dishesResponse.success) {
       setDishes(dishesResponse.data || []);
     }
+
+    const menuResponse = api.getChefMenuCharts(user.id);
+    if (menuResponse.success) {
+      const existing = menuResponse.data?.[0] || null;
+      setMenuChart(existing);
+      if (existing) {
+        setMenuStartDate(existing.startDate);
+        const diff = Math.max(1, Math.round((new Date(existing.endDate).getTime() - new Date(existing.startDate).getTime()) / (1000 * 60 * 60 * 24)) + 1);
+        setMenuDuration(diff === 14 ? 14 : 7);
+        setMenuDays(existing.days);
+        setMenuImageUrl(existing.imageUrl);
+      }
+    }
     
     setLoading(false);
   };
+
+  const buildMenuDays = (startDate: string, duration: 7 | 14): ChefMenuDay[] => {
+    const start = new Date(`${startDate}T00:00:00`);
+    return Array.from({ length: duration }).map((_, index) => {
+      const day = new Date(start);
+      day.setDate(start.getDate() + index);
+      return {
+        date: day.toISOString().split('T')[0],
+        slots: {},
+      };
+    });
+  };
+
+  useEffect(() => {
+    if (!menuChart) {
+      setMenuDays(buildMenuDays(menuStartDate, menuDuration));
+    }
+  }, [menuStartDate, menuDuration, menuChart]);
 
   const handleAddDish = (e: React.FormEvent) => {
     e.preventDefault();
@@ -101,6 +139,67 @@ export const ChefDashboard = () => {
     if (newOption.trim()) {
       setCustomOptions([...customOptions, newOption.trim()]);
       setNewOption('');
+    }
+  };
+
+  const updateMenuSlot = (date: string, slot: MealSlot, mealId: string) => {
+    setMenuDays(prev => prev.map(day => {
+      if (day.date !== date) return day;
+      const current = day.slots[slot] || { mealId: '', alternativeMealIds: [] };
+      return {
+        ...day,
+        slots: {
+          ...day.slots,
+          [slot]: { ...current, mealId },
+        },
+      };
+    }));
+  };
+
+  const updateMenuAlternatives = (date: string, slot: MealSlot, alternativeMealIds: string[]) => {
+    setMenuDays(prev => prev.map(day => {
+      if (day.date !== date) return day;
+      const current = day.slots[slot] || { mealId: '', alternativeMealIds: [] };
+      return {
+        ...day,
+        slots: {
+          ...day.slots,
+          [slot]: { ...current, alternativeMealIds },
+        },
+      };
+    }));
+  };
+
+  const handleMenuImageUpload = (file?: File) => {
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      setMenuImageUrl(reader.result as string);
+    };
+    reader.readAsDataURL(file);
+  };
+
+  const handleSaveMenuChart = () => {
+    if (!user) return;
+    const start = new Date(`${menuStartDate}T00:00:00`);
+    const end = new Date(start);
+    end.setDate(start.getDate() + menuDuration - 1);
+
+    const chart: ChefMenuChart = {
+      id: menuChart?.id || `chart-${user.id}-${Date.now()}`,
+      chefId: user.id,
+      startDate: menuStartDate,
+      endDate: end.toISOString().split('T')[0],
+      imageUrl: menuImageUrl,
+      days: menuDays,
+    };
+
+    const response = api.upsertChefMenuChart(user.id, chart);
+    if (response.success) {
+      toast({ title: 'Menu Chart Saved', description: 'Weekly menu has been updated.' });
+      setMenuChart(chart);
+    } else {
+      toast({ title: 'Error', description: response.error, variant: 'destructive' });
     }
   };
 
@@ -291,6 +390,94 @@ export const ChefDashboard = () => {
               </CardContent>
             </Card>
           </div>
+
+          {/* Menu Chart Builder */}
+          <Card className="shadow-soft mb-6 bg-white/85 backdrop-blur-sm animate-slide-up" style={{ animationDelay: '320ms' }}>
+            <CardHeader>
+              <CardTitle className="font-display">Weekly Menu Chart</CardTitle>
+              <CardDescription>Enter your brochure menu and optional swap alternatives per day/slot</CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                <div className="space-y-2">
+                  <Label>Start Date</Label>
+                  <Input type="date" value={menuStartDate} onChange={(e) => { setMenuStartDate(e.target.value); setMenuChart(null); }} />
+                </div>
+                <div className="space-y-2">
+                  <Label>Duration</Label>
+                  <select
+                    className="w-full h-10 px-3 rounded-lg border border-border bg-background"
+                    value={menuDuration}
+                    onChange={(e) => { setMenuDuration((e.target.value === '14' ? 14 : 7) as 7 | 14); setMenuChart(null); }}
+                  >
+                    <option value={7}>7 days</option>
+                    <option value={14}>14 days</option>
+                  </select>
+                </div>
+                <div className="space-y-2">
+                  <Label>Brochure Image (optional)</Label>
+                  <Input type="file" accept="image/*" onChange={(e) => handleMenuImageUpload(e.target.files?.[0])} />
+                </div>
+              </div>
+
+              {menuImageUrl && (
+                <div className="rounded-xl border border-border/50 p-3 bg-white/70">
+                  <p className="text-xs text-muted-foreground mb-2">Uploaded brochure preview</p>
+                  <img src={menuImageUrl} alt="Menu brochure" className="w-full max-h-64 object-contain rounded-lg border" />
+                </div>
+              )}
+
+              <div className="space-y-4">
+                {menuDays.map((day) => (
+                  <div key={day.date} className="rounded-xl border border-border/50 p-4 bg-white/70">
+                    <div className="flex items-center justify-between mb-3">
+                      <p className="font-medium">{day.date}</p>
+                      <Badge variant="secondary">Brochure Day</Badge>
+                    </div>
+                    <div className="grid md:grid-cols-3 gap-4">
+                      {slotOptions.map((slot) => {
+                        const slotData = day.slots[slot];
+                        const selectedMealId = slotData?.mealId || '';
+                        return (
+                          <div key={`${day.date}-${slot}`} className="space-y-2">
+                            <Label className="capitalize">{slot}</Label>
+                            <select
+                              className="w-full h-9 px-3 rounded-lg border border-border bg-background text-sm"
+                              value={selectedMealId}
+                              onChange={(e) => updateMenuSlot(day.date, slot, e.target.value)}
+                            >
+                              <option value="">Select meal</option>
+                              {dishes.map((dish) => (
+                                <option key={dish.id} value={dish.id}>{dish.name}</option>
+                              ))}
+                            </select>
+                            <select
+                              multiple
+                              className="w-full h-20 px-3 rounded-lg border border-border bg-background text-xs"
+                              value={slotData?.alternativeMealIds || []}
+                              onChange={(e) => {
+                                const values = Array.from(e.target.selectedOptions).map(opt => opt.value);
+                                updateMenuAlternatives(day.date, slot, values.filter(id => id !== selectedMealId));
+                              }}
+                            >
+                              {dishes.filter(d => d.id !== selectedMealId).map((dish) => (
+                                <option key={dish.id} value={dish.id}>{dish.name}</option>
+                              ))}
+                            </select>
+                            <p className="text-xs text-muted-foreground">Select alternatives (optional)</p>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              <div className="flex justify-end">
+                <Button onClick={handleSaveMenuChart} className="gradient-primary">Save Menu Chart</Button>
+              </div>
+            </CardContent>
+          </Card>
 
           {/* Orders List */}
           <Card className="shadow-soft mb-6 bg-white/80 backdrop-blur-sm animate-slide-up" style={{ animationDelay: '350ms' }}>

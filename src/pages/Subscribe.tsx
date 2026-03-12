@@ -7,16 +7,16 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
 import { 
-  ChefHat, ArrowLeft, ArrowRight, Check, MapPin, Clock,
+  ChefHat, ArrowLeft, ArrowRight, Check, MapPin,
   Leaf, Drumstick, Flame, Dumbbell, Sparkles, Star, Home, Briefcase
 } from 'lucide-react';
 import * as api from '@/services/api';
 import { useAuth } from '@/contexts/AuthContext';
 import { useToast } from '@/hooks/use-toast';
-import type { Address, PlanType, MealTime, Customer, Dish } from '@/types';
+import type { Address, PlanType, Customer, Dish } from '@/types';
 
 type ChefWithData = ReturnType<typeof api.getApprovedChefsWithRatings>['data'] extends (infer T)[] | undefined ? T : never;
-type Step = 'chef' | 'menu' | 'plan' | 'address' | 'confirm';
+type Step = 'chef' | 'menu' | 'plan' | 'address' | 'confirm' | 'payment';
 
 export const Subscribe = () => {
   const navigate = useNavigate();
@@ -29,10 +29,10 @@ export const Subscribe = () => {
   const [selectedChefId, setSelectedChefId] = useState<string>(location.state?.selectedChefId || '');
   const [selectedDishes, setSelectedDishes] = useState<string[]>(location.state?.selectedDishes || []);
   const [plan, setPlan] = useState<PlanType>('standard');
-  const [mealTime, setMealTime] = useState<MealTime>('lunch');
   const [homeAddress, setHomeAddress] = useState<Address>({ street: '', city: '', state: '', zipCode: '' });
   const [workAddress, setWorkAddress] = useState<Address>({ street: '', city: '', state: '', zipCode: '' });
   const [loading, setLoading] = useState(false);
+  const [paymentMethod, setPaymentMethod] = useState<'upi' | 'debit' | 'credit' | 'netbanking'>('upi');
 
   const customer = user as Customer;
 
@@ -64,7 +64,13 @@ export const Subscribe = () => {
     { id: 'premium' as PlanType, name: 'Premium', price: '₹5,999', meals: '60 meals/month', perMeal: '₹100/meal' },
   ];
 
-  const handleSubmit = async () => {
+  const planSlots: Record<PlanType, string> = {
+    basic: 'Lunch',
+    standard: 'Lunch • Dinner',
+    premium: 'Breakfast • Lunch • Dinner',
+  };
+
+  const handlePayment = async () => {
     if (!user) return;
     setLoading(true);
 
@@ -73,7 +79,6 @@ export const Subscribe = () => {
       selectedChefId,
       selectedDishes,
       plan,
-      mealTime,
       homeAddress,
       workAddress
     );
@@ -98,7 +103,7 @@ export const Subscribe = () => {
   };
 
   const nextStep = () => {
-    const steps: Step[] = ['chef', 'menu', 'plan', 'address', 'confirm'];
+    const steps: Step[] = ['chef', 'menu', 'plan', 'address', 'confirm', 'payment'];
     const currentIndex = steps.indexOf(step);
     if (currentIndex < steps.length - 1) {
       setStep(steps[currentIndex + 1]);
@@ -106,7 +111,7 @@ export const Subscribe = () => {
   };
 
   const prevStep = () => {
-    const steps: Step[] = ['chef', 'menu', 'plan', 'address', 'confirm'];
+    const steps: Step[] = ['chef', 'menu', 'plan', 'address', 'confirm', 'payment'];
     const currentIndex = steps.indexOf(step);
     if (currentIndex > 0) {
       setStep(steps[currentIndex - 1]);
@@ -144,6 +149,8 @@ export const Subscribe = () => {
   };
 
   const nutritionSummary = getSelectedDishesNutrition();
+  const startDate = new Date();
+  startDate.setDate(startDate.getDate() + 1);
 
   return (
     <Layout>
@@ -152,8 +159,8 @@ export const Subscribe = () => {
           {/* Progress Indicator */}
           <div className="mb-8">
             <div className="flex items-center justify-between text-sm mb-2">
-              {['Chef', 'Menu', 'Plan', 'Address', 'Confirm'].map((label, index) => {
-                const steps: Step[] = ['chef', 'menu', 'plan', 'address', 'confirm'];
+              {['Chef', 'Menu', 'Plan', 'Address', 'Confirm', 'Payment'].map((label, index) => {
+                const steps: Step[] = ['chef', 'menu', 'plan', 'address', 'confirm', 'payment'];
                 const isActive = steps.indexOf(step) >= index;
                 return (
                   <div key={label} className={`flex items-center gap-2 ${isActive ? 'text-primary' : 'text-muted-foreground'}`}>
@@ -170,7 +177,7 @@ export const Subscribe = () => {
             <div className="h-2 bg-muted rounded-full overflow-hidden">
               <div 
                 className="h-full bg-primary transition-all" 
-                style={{ width: `${((['chef', 'menu', 'plan', 'address', 'confirm'].indexOf(step) + 1) / 5) * 100}%` }}
+                style={{ width: `${((['chef', 'menu', 'plan', 'address', 'confirm', 'payment'].indexOf(step) + 1) / 6) * 100}%` }}
               />
             </div>
           </div>
@@ -300,23 +307,6 @@ export const Subscribe = () => {
             <div className="animate-fade-in">
               <h2 className="font-display text-2xl font-bold mb-2">Choose Your Plan</h2>
               <p className="text-muted-foreground mb-6">Select a subscription plan that fits your needs</p>
-
-              <div className="space-y-2 mb-6">
-                <Label>Meal Time</Label>
-                <div className="grid grid-cols-3 gap-2">
-                  {(['lunch', 'dinner', 'both'] as MealTime[]).map((time) => (
-                    <Button
-                      key={time}
-                      variant={mealTime === time ? 'default' : 'outline'}
-                      onClick={() => setMealTime(time)}
-                      className="capitalize"
-                    >
-                      {time === 'both' ? 'Lunch & Dinner' : time}
-                    </Button>
-                  ))}
-                </div>
-              </div>
-
               <div className="grid gap-4">
                 {plans.map(p => (
                   <Card
@@ -333,7 +323,7 @@ export const Subscribe = () => {
                             <h3 className="font-display font-bold text-lg">{p.name}</h3>
                             {p.popular && <Badge className="gradient-primary">Popular</Badge>}
                           </div>
-                          <p className="text-sm text-muted-foreground">{p.meals}</p>
+                          <p className="text-sm text-muted-foreground">{p.meals} • {planSlots[p.id]}</p>
                         </div>
                         <div className="text-right">
                           <p className="text-2xl font-bold text-primary">{p.price}</p>
@@ -455,7 +445,7 @@ export const Subscribe = () => {
                   <div className="pb-4 border-b">
                     <p className="text-sm text-muted-foreground mb-1">Subscription Plan</p>
                     <div className="flex justify-between items-center">
-                      <p className="font-bold">{plans.find(p => p.id === plan)?.name} - {mealTime}</p>
+                      <p className="font-bold">{plans.find(p => p.id === plan)?.name} • {planSlots[plan]}</p>
                       <p className="text-xl font-bold text-primary">{plans.find(p => p.id === plan)?.price}</p>
                     </div>
                   </div>
@@ -478,8 +468,61 @@ export const Subscribe = () => {
                       {homeAddress.street}, {homeAddress.city}, {homeAddress.state} - {homeAddress.zipCode}
                     </p>
                   </div>
+
+                  <div className="pt-4 border-t">
+                    <p className="text-sm text-muted-foreground mb-1">Subscription Start Date</p>
+                    <p className="font-medium">{startDate.toDateString()}</p>
+                  </div>
                 </CardContent>
               </Card>
+            </div>
+          )}
+
+          {/* Step: Payment */}
+          {step === 'payment' && (
+            <div className="animate-fade-in">
+              <h2 className="font-display text-2xl font-bold mb-2">Payment</h2>
+              <p className="text-muted-foreground mb-6">Complete your payment to activate the subscription</p>
+
+              <Card className="shadow-elevated mb-6">
+                <CardContent className="p-6 space-y-4">
+                  <div className="flex items-center justify-between">
+                    <p className="text-sm text-muted-foreground">Selected Plan</p>
+                    <p className="font-medium">{plans.find(p => p.id === plan)?.name}</p>
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <p className="text-sm text-muted-foreground">Meal Slots</p>
+                    <p className="font-medium">{planSlots[plan]}</p>
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <p className="text-sm text-muted-foreground">Start Date</p>
+                    <p className="font-medium">{startDate.toDateString()}</p>
+                  </div>
+                  <div className="flex items-center justify-between border-t pt-4">
+                    <p className="text-sm text-muted-foreground">Total Monthly Cost</p>
+                    <p className="text-xl font-bold text-primary">{plans.find(p => p.id === plan)?.price}</p>
+                  </div>
+                </CardContent>
+              </Card>
+
+              <div className="grid gap-3 mb-6">
+                {([
+                  { id: 'upi', label: 'UPI' },
+                  { id: 'debit', label: 'Debit Card' },
+                  { id: 'credit', label: 'Credit Card' },
+                  { id: 'netbanking', label: 'Net Banking' },
+                ] as const).map((method) => (
+                  <Button
+                    key={method.id}
+                    variant={paymentMethod === method.id ? 'default' : 'outline'}
+                    onClick={() => setPaymentMethod(method.id)}
+                    className="justify-start"
+                  >
+                    {method.label}
+                  </Button>
+                ))}
+              </div>
+
             </div>
           )}
 
@@ -491,22 +534,22 @@ export const Subscribe = () => {
                 Back
               </Button>
             )}
-            {step !== 'confirm' ? (
+            {step !== 'payment' ? (
               <Button 
                 onClick={nextStep} 
                 disabled={!canProceed()}
                 className="flex-1 gradient-primary"
               >
-                Continue
+                {step === 'confirm' ? 'Proceed to Payment' : 'Continue'}
                 <ArrowRight className="w-4 h-4 ml-2" />
               </Button>
             ) : (
               <Button 
-                onClick={handleSubmit}
+                onClick={handlePayment}
                 disabled={loading}
                 className="flex-1 gradient-primary"
               >
-                {loading ? 'Processing...' : 'Start Subscription'}
+                {loading ? 'Processing...' : 'Complete Payment'}
                 <Check className="w-4 h-4 ml-2" />
               </Button>
             )}
@@ -518,3 +561,7 @@ export const Subscribe = () => {
 };
 
 export default Subscribe;
+
+
+
+
