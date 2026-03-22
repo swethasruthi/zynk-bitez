@@ -2,9 +2,12 @@ import type { Request, Response } from 'express';
 import { getActiveChefs, getChefById } from '../models/chefQueries.js';
 import { getAllDishes, getDishesByChefId } from '../models/dishQueries.js';
 import { getReviewsByChefId } from '../models/reviewQueries.js';
+import type { Dish, Review, User } from '../models/schema.js';
 import { sampleMeals } from '../data/sampleCatalog.js';
 
-const mapDish = (dish: any) => ({
+const getErrorMessage = (error: unknown) => (error instanceof Error ? error.message : 'Unexpected error');
+
+const mapDish = (dish: Dish) => ({
   id: String(dish.id),
   chefId: String(dish.chefId),
   name: dish.name,
@@ -23,7 +26,9 @@ const mapDish = (dish: any) => ({
   isSpecial: dish.isSpecial,
 });
 
-const mapChef = (chef: any, dishes: any[]) => ({
+type CatalogDish = ReturnType<typeof mapDish>;
+
+const mapChef = (chef: User, dishes: CatalogDish[]) => ({
   id: String(chef.id),
   name: chef.fullName,
   email: chef.email,
@@ -41,7 +46,7 @@ const mapChef = (chef: any, dishes: any[]) => ({
   reviewCount: chef.reviewCount || 0,
 });
 
-const mapReview = (review: any) => ({
+const mapReview = (review: Review) => ({
   id: String(review.id),
   orderId: String(review.orderId),
   customerId: String(review.customerId),
@@ -55,12 +60,22 @@ const mapReview = (review: any) => ({
   hiddenReason: review.hiddenReason || undefined,
 });
 
+const mapMealFromDish = (dish: Dish) => ({
+  id: String(dish.id),
+  name: dish.name,
+  description: dish.description,
+  category: dish.category === 'veg' ? 'Vegetarian' : 'Non-Vegetarian',
+  imageUrl: dish.imageUrl || undefined,
+  calories: dish.calories,
+  isVegetarian: dish.category === 'veg',
+});
+
 export const getChefsWithRatings = async (_req: Request, res: Response) => {
   try {
     const chefs = await getActiveChefs();
     const dishes = await getAllDishes();
 
-    const dishesByChef = dishes.reduce<Record<number, any[]>>((acc, dish) => {
+    const dishesByChef = dishes.reduce<Record<number, CatalogDish[]>>((acc, dish) => {
       acc[dish.chefId] = acc[dish.chefId] || [];
       acc[dish.chefId].push(mapDish(dish));
       return acc;
@@ -71,8 +86,8 @@ export const getChefsWithRatings = async (_req: Request, res: Response) => {
       .sort((a, b) => (b.avgRating || 0) - (a.avgRating || 0));
 
     return res.json({ success: true, data });
-  } catch (error: any) {
-    return res.status(500).json({ success: false, error: error?.message || 'Failed to load chefs' });
+  } catch (error: unknown) {
+    return res.status(500).json({ success: false, error: getErrorMessage(error) || 'Failed to load chefs' });
   }
 };
 
@@ -108,8 +123,8 @@ export const getChefProfile = async (req: Request, res: Response) => {
         avgRating,
       },
     });
-  } catch (error: any) {
-    return res.status(500).json({ success: false, error: error?.message || 'Failed to load chef profile' });
+  } catch (error: unknown) {
+    return res.status(500).json({ success: false, error: getErrorMessage(error) || 'Failed to load chef profile' });
   }
 };
 
@@ -117,11 +132,20 @@ export const getDishes = async (_req: Request, res: Response) => {
   try {
     const dishes = await getAllDishes();
     return res.json({ success: true, data: dishes.map(mapDish) });
-  } catch (error: any) {
-    return res.status(500).json({ success: false, error: error?.message || 'Failed to load dishes' });
+  } catch (error: unknown) {
+    return res.status(500).json({ success: false, error: getErrorMessage(error) || 'Failed to load dishes' });
   }
 };
 
 export const getMeals = async (_req: Request, res: Response) => {
-  return res.json({ success: true, data: sampleMeals });
+  try {
+    const dishes = await getAllDishes();
+    if (dishes.length > 0) {
+      return res.json({ success: true, data: dishes.map(mapMealFromDish) });
+    }
+
+    return res.json({ success: true, data: sampleMeals });
+  } catch (error: unknown) {
+    return res.status(500).json({ success: false, error: getErrorMessage(error) || 'Failed to load meals' });
+  }
 };

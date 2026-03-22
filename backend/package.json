@@ -10,7 +10,8 @@
     "start": "node dist/index.js",
     "db:generate": "npx dotenv -e .env -- drizzle-kit generate:pg",
     "db:push": "npx dotenv -e .env -- drizzle-kit push:pg",
-    "setup:dev": "npm run db:generate && npm run db:push && npm run dev"
+    "db:seed": "npx dotenv -e .env -- tsx src/scripts/seedCatalog.ts",
+    "setup:dev": "npm run db:generate && npm run db:push && npm run db:seed && npm run dev"
   },
   "keywords": [
     "express",

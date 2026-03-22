@@ -11,12 +11,13 @@ export const initializeDatabase = async () => {
   try {
     // Create pool only when initializing (after env vars are loaded)
     const connectionString = process.env.DATABASE_URL;
-    console.log('Connection string from env:', connectionString);
-    console.log('Available env vars:', Object.keys(process.env).filter(k => k.startsWith('DATABASE') || k.startsWith('JWT')));
 
     if (!connectionString) {
       throw new Error('DATABASE_URL environment variable is not set');
     }
+
+    const connectionUrl = new URL(connectionString);
+    console.log(`Connecting to database host: ${connectionUrl.hostname}`);
 
     pool = new Pool({
       connectionString: connectionString,

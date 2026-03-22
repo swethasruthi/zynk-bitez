@@ -30,6 +30,7 @@ import catalogRoutes from "./routes/catalogRoutes.js";
 import adminRoutes from "./routes/adminRoutes.js";
 import { errorHandler, notFoundHandler } from "./middlewares/errorHandler.js";
 import { ensureDefaultAdminUser } from "./services/adminBootstrap.js";
+import { seedCatalogIfEmpty } from "./data/seedCatalog.js";
 
 // -----------------------------------------------------------------------------
 // App & Config
@@ -117,7 +118,9 @@ async function startServer() {
     // 1️⃣ Initialize database FIRST
     await initializeDatabase();
     await ensureDefaultAdminUser();
+    const catalogSeed = await seedCatalogIfEmpty();
     console.log("✓ Database connected successfully");
+    console.log(`✓ Catalog ready (${catalogSeed.totalChefCount} chefs, ${catalogSeed.totalDishCount} dishes)`);
 
     // 2️⃣ Register routes AFTER DB is ready
     app.use("/api/auth", authRoutes);
