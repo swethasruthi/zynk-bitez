@@ -1,202 +1,135 @@
-import Razorpay from "razorpay";
-import crypto from "crypto";
-import type { Request, Response } from "express";
-import { getUserByEmail, createUser } from "../models/userQueries.js";
-import { getActiveSubscription, createSubscription } from "../models/subscriptionQueries.js";
-import { hashPassword } from "../utils/bcrypt.js";
-import { getNextBillingDate, isSkipSwapLockedByTime } from "../utils/subscriptionUtils.js";
-import { signToken } from "../utils/jwt.js";
-import { ensureUpcomingMealsForCustomer } from "../services/mealPlannerService.js";
+import { Request, Response } from 'express';
+import Razorpay from 'razorpay';
+import crypto from 'crypto';
+import { getActiveSubscription, createSubscription } from '../models/subscriptionQueries.js';
+import { getNextBillingDate, isSkipSwapLockedByTime } from '../utils/subscriptionUtils.js';
+import { ensureUpcomingMealsForCustomer } from '../services/mealPlannerService.js';
 
-const getRazorpayClient = () => {
-  const keyId = process.env.RAZORPAY_KEY_ID;
-  const keySecret = process.env.RAZORPAY_KEY_SECRET;
-
-  if (!keyId || !keySecret) {
-    throw new Error("Missing Razorpay credentials. Set RAZORPAY_KEY_ID and RAZORPAY_KEY_SECRET.");
-  }
-
-  return new Razorpay({ key_id: keyId, key_secret: keySecret });
+const getRazorpay = () => {
+  return new Razorpay({
+    key_id: process.env.RAZORPAY_KEY_ID!,
+    key_secret: process.env.RAZORPAY_KEY_SECRET!,
+  });
 };
 
-export const createRazorpayOrder = async (req: Request, res: Response) => {
-  try {
-    const { amount, currency = "INR", receipt, notes } = req.body || {};
+const planConfig: Record<string, { mealsPerWeek: number; priceInCents: number }> = {
+  basic: { mealsPerWeek: 5, priceInCents: 299900 },
+  standard: { mealsPerWeek: 7, priceInCents: 449900 },
+  premium: { mealsPerWeek: 15, priceInCents: 599900 },
+};
 
-    if (!amount || Number.isNaN(Number(amount))) {
-      return res.status(400).json({ success: false, error: "Amount is required" });
+export const createOrder = async (req: Request, res: Response) => {
+  try {
+    const { amount, currency = 'INR', plan } = req.body;
+
+    if (!amount || Number.isNaN(Number(amount)) || Number(amount) < 1) {
+      return res.status(400).json({ success: false, message: 'Valid amount is required' });
     }
 
-    const amountInPaise = Math.round(Number(amount) * 100);
-    const razorpay = getRazorpayClient();
-
-    const order = await razorpay.orders.create({
+    const amountInPaise = Math.round(Number(amount));
+    const order = await getRazorpay().orders.create({
       amount: amountInPaise,
       currency,
-      receipt: receipt || `zynk_${Date.now()}`,
-      notes,
+      receipt: `receipt_${Date.now()}`,
+      notes: { plan: plan || '' },
     });
 
-    return res.json({
+    res.json({
       success: true,
-      data: {
-        keyId: process.env.RAZORPAY_KEY_ID,
-        order,
-      },
+      order,
+      keyId: process.env.RAZORPAY_KEY_ID,
     });
-  } catch (error: any) {
-    return res.status(500).json({
-      success: false,
-      error: error?.message || "Failed to create Razorpay order",
-    });
+  } catch (error) {
+    res.status(500).json({ success: false, message: 'Failed to create order' });
   }
 };
 
-export const verifyRazorpayPayment = (req: Request, res: Response) => {
-  try {
-    const { razorpay_order_id, razorpay_payment_id, razorpay_signature } = req.body || {};
-
-    if (!razorpay_order_id || !razorpay_payment_id || !razorpay_signature) {
-      return res.status(400).json({ success: false, error: "Payment verification data missing" });
-    }
-
-    const keySecret = process.env.RAZORPAY_KEY_SECRET;
-    if (!keySecret) {
-      return res.status(500).json({ success: false, error: "Missing Razorpay secret" });
-    }
-
-    const payload = `${razorpay_order_id}|${razorpay_payment_id}`;
-    const expectedSignature = crypto
-      .createHmac("sha256", keySecret)
-      .update(payload)
-      .digest("hex");
-
-    const isValid = expectedSignature === razorpay_signature;
-
-    if (!isValid) {
-      return res.status(400).json({ success: false, error: "Invalid Razorpay signature" });
-    }
-
-    return res.json({ success: true, data: { verified: true } });
-  } catch (error: any) {
-    return res.status(500).json({
-      success: false,
-      error: error?.message || "Failed to verify Razorpay payment",
-    });
-  }
-};
-
-export const verifyRazorpayAndCreateSubscription = async (req: Request, res: Response) => {
+export const verifyPayment = async (req: Request, res: Response) => {
   try {
     const {
       razorpay_order_id,
       razorpay_payment_id,
       razorpay_signature,
-      customer,
-      subscription,
-    } = req.body || {};
+      plan,
+      chefId,
+      homeAddress,
+    } = req.body;
 
     if (!razorpay_order_id || !razorpay_payment_id || !razorpay_signature) {
-      return res.status(400).json({ success: false, error: "Payment verification data missing" });
+      return res.status(400).json({ success: false, message: 'Payment verification data missing' });
     }
 
     const keySecret = process.env.RAZORPAY_KEY_SECRET;
     if (!keySecret) {
-      return res.status(500).json({ success: false, error: "Missing Razorpay secret" });
+      return res.status(500).json({ success: false, message: 'Server configuration error' });
     }
 
-    const payload = `${razorpay_order_id}|${razorpay_payment_id}`;
+    const body = razorpay_order_id + '|' + razorpay_payment_id;
     const expectedSignature = crypto
-      .createHmac("sha256", keySecret)
-      .update(payload)
-      .digest("hex");
+      .createHmac('sha256', keySecret)
+      .update(body)
+      .digest('hex');
 
     if (expectedSignature !== razorpay_signature) {
-      return res.status(400).json({ success: false, error: "Invalid Razorpay signature" });
+      return res.status(400).json({ success: false, message: 'Invalid payment signature' });
     }
 
-    if (!customer?.email || !customer?.fullName) {
-      return res.status(400).json({ success: false, error: "Customer details missing" });
+    const userId = req.user?.userId;
+    if (!userId || typeof userId !== 'number') {
+      return res.status(401).json({ success: false, message: 'User not authenticated' });
     }
 
-    if (
-      !subscription?.planName ||
-      !subscription?.mealsPerWeek ||
-      subscription?.priceInCents === undefined ||
-      !subscription?.deliveryAddress ||
-      !subscription?.postalCode ||
-      !subscription?.city
-    ) {
-      return res.status(400).json({ success: false, error: "Subscription details missing" });
-    }
-
-    let user = await getUserByEmail(customer.email);
-    if (!user) {
-      const randomPassword = crypto.randomBytes(16).toString("hex");
-      const passwordHash = await hashPassword(randomPassword);
-      user = await createUser({
-        fullName: customer.fullName,
-        email: customer.email,
-        passwordHash,
-        role: "customer",
-        chefBusinessName: null,
-        phone: customer.phone || null,
-        isActive: true,
-      });
-    }
-
-    const existing = await getActiveSubscription(user.id);
+    const existing = await getActiveSubscription(userId);
     if (existing) {
-      return res.status(409).json({ success: false, error: "User already has an active subscription" });
+      return res.status(409).json({ success: false, message: 'User already has an active subscription' });
     }
 
-    const isLocked = isSkipSwapLockedByTime();
-    const parsedChefId = subscription.chefId ? Number(subscription.chefId) : null;
-    const chefIdValue = parsedChefId && !Number.isNaN(parsedChefId) ? parsedChefId : null;
+    const planKey = (plan || 'standard').toLowerCase();
+    const config = planConfig[planKey] || planConfig.standard;
 
-    const createdSubscription = await createSubscription({
-      userId: user.id,
-      planName: subscription.planName,
+    if (!homeAddress?.street || !homeAddress?.city || !homeAddress?.zipCode) {
+      return res.status(400).json({ success: false, message: 'Delivery address is required' });
+    }
+
+    const deliveryAddress = `${homeAddress.street}, ${homeAddress.city}, ${homeAddress.state || ''} - ${homeAddress.zipCode}`.trim();
+    const parsedChefId = chefId != null ? parseInt(String(chefId), 10) : null;
+    const chefIdValue = !Number.isNaN(parsedChefId) && parsedChefId > 0 ? parsedChefId : null;
+    const isLocked = isSkipSwapLockedByTime();
+
+    const subscription = await createSubscription({
+      userId,
+      planName: planKey.charAt(0).toUpperCase() + planKey.slice(1),
       chefId: chefIdValue,
-      mealsPerWeek: subscription.mealsPerWeek,
-      priceInCents: subscription.priceInCents,
-      deliveryAddress: subscription.deliveryAddress,
-      postalCode: subscription.postalCode,
-      city: subscription.city,
-      status: "active",
+      mealsPerWeek: config.mealsPerWeek,
+      priceInCents: config.priceInCents,
+      deliveryAddress,
+      postalCode: String(homeAddress.zipCode),
+      city: homeAddress.city,
+      status: 'active',
       nextBillingDate: getNextBillingDate(),
       isSkipSwapLocked: isLocked,
       lockAppliedAt: isLocked ? new Date() : null,
     });
 
     try {
-      await ensureUpcomingMealsForCustomer(user.id);
+      await ensureUpcomingMealsForCustomer(userId);
     } catch (seedError) {
-      console.error("Failed to seed meals after payment:", seedError);
+      console.error('Failed to seed meals after payment:', seedError);
     }
 
-    return res.json({
+    res.json({
       success: true,
-      data: {
-        verified: true,
-        token: signToken({
-          userId: user.id,
-          email: user.email,
-          role: user.role,
-        }),
-        subscription: createdSubscription,
-        user: {
-          id: user.id,
-          email: user.email,
-          fullName: user.fullName,
-          role: user.role,
-        },
+      message: 'Payment verified',
+      paymentId: razorpay_payment_id,
+      plan: planKey,
+      subscription: {
+        id: subscription.id,
+        planName: subscription.planName,
+        status: subscription.status,
       },
     });
-  } catch (error: any) {
-    return res.status(500).json({
-      success: false,
-      error: error?.message || "Failed to verify payment and create subscription",
-    });
+  } catch (error) {
+    console.error('Payment verification error:', error);
+    res.status(500).json({ success: false, message: 'Payment verification failed' });
   }
 };

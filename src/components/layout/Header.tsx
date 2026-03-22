@@ -1,5 +1,6 @@
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
+import { clearApiToken } from '@/services/backend';
 import { Button } from '@/components/ui/button';
 import {
   UtensilsCrossed,
@@ -31,6 +32,7 @@ export const Header = () => {
   const navigate = useNavigate();
 
   const handleLogout = () => {
+    clearApiToken();
     logout();
     navigate('/');
   };

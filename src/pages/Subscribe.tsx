@@ -1,10 +1,9 @@
 import { useState, useEffect } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { Layout } from '@/components/layout/Layout';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
 import { 
   ChefHat, ArrowLeft, ArrowRight, Check, MapPin,
@@ -12,6 +11,7 @@ import {
 } from 'lucide-react';
 import * as api from '@/services/api';
 import { useAuth } from '@/contexts/AuthContext';
+import { getBackendApiBaseUrl, getApiToken, getChefsWithRatings as getBackendChefs } from '@/services/backend';
 import { useToast } from '@/hooks/use-toast';
 import type { Address, PlanType, Customer, Dish } from '@/types';
 
@@ -42,13 +42,16 @@ export const Subscribe = () => {
       return;
     }
     loadChefs();
-    
-    // Pre-fill addresses if customer has them
     if (customer?.homeAddress) setHomeAddress(customer.homeAddress);
     if (customer?.workAddress) setWorkAddress(customer.workAddress);
   }, [user]);
 
-  const loadChefs = () => {
+  const loadChefs = async () => {
+    const backendChefs = await getBackendChefs();
+    if (backendChefs && backendChefs.length > 0) {
+      setChefs(backendChefs);
+      return;
+    }
     const response = api.getApprovedChefsWithRatings();
     if (response.success && response.data) {
       setChefs(response.data);
@@ -72,24 +75,158 @@ export const Subscribe = () => {
 
   const handlePayment = async () => {
     if (!user) return;
+    const token = getApiToken();
+    if (!token) {
+      toast({
+        title: 'Login required',
+        description: 'Please sign in again to complete payment.',
+        variant: 'destructive',
+      });
+      navigate('/login');
+      return;
+    }
+
     setLoading(true);
 
-    const response = api.subscribeWithChef(
-      user.id,
-      selectedChefId,
-      selectedDishes,
-      plan,
-      homeAddress,
-      workAddress
-    );
+    try {
+      // Step 1: Load Razorpay script
+      await new Promise<void>((resolve, reject) => {
+        if ((window as any).Razorpay) { resolve(); return; }
+        const script = document.createElement('script');
+        script.src = 'https://checkout.razorpay.com/v1/checkout.js';
+        script.onload = () => resolve();
+        script.onerror = () => reject(new Error('Failed to load Razorpay'));
+        document.body.appendChild(script);
+      });
 
-    if (response.success) {
-      toast({ title: 'Subscription Active!', description: 'Your meals will start from tomorrow.' });
-      navigate('/dashboard');
-    } else {
-      toast({ title: 'Error', description: response.error, variant: 'destructive' });
+      // Step 2: Get API base URL
+      let apiBase = getBackendApiBaseUrl();
+      if (apiBase.endsWith('/api')) apiBase = apiBase.replace(/\/api\/?$/, '');
+      if (!apiBase) apiBase = `${window.location.protocol}//${window.location.hostname}:3002`;
+
+      // Step 3: Plan amounts in paise
+      const planAmounts: Record<string, number> = {
+        basic: 299900,
+        standard: 449900,
+        premium: 599900,
+      };
+
+      // Step 4: Create order on backend
+      const orderRes = await fetch(`${apiBase}/api/payment/create-order`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          amount: planAmounts[plan] || 449900,
+          currency: 'INR',
+          plan,
+        }),
+      });
+
+      const orderData = await orderRes.json();
+
+      if (!orderData.success || !orderData.order) {
+        toast({
+          title: 'Error',
+          description: orderData.message || 'Could not create payment order',
+          variant: 'destructive',
+        });
+        setLoading(false);
+        return;
+      }
+
+      const razorpayKey = import.meta.env.VITE_RAZORPAY_KEY_ID;
+      if (!razorpayKey) {
+        toast({
+          title: 'Configuration error',
+          description: 'Razorpay key not configured.',
+          variant: 'destructive',
+        });
+        setLoading(false);
+        return;
+      }
+
+      const userName = (user as any).fullName ?? (user as any).name ?? '';
+
+      // Step 5: Stop loading BEFORE opening popup
+      setLoading(false);
+
+      // Step 6: Open Razorpay popup
+      const options = {
+        key: razorpayKey,
+        amount: orderData.order.amount,
+        currency: 'INR',
+        name: 'ZYNK Bites',
+        description: `${plan} subscription`,
+        order_id: orderData.order.id,
+        handler: async (response: any) => {
+          try {
+            const verifyRes = await fetch(`${apiBase}/api/payment/verify`, {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                Authorization: `Bearer ${token}`,
+              },
+              body: JSON.stringify({
+                razorpay_order_id: response.razorpay_order_id,
+                razorpay_payment_id: response.razorpay_payment_id,
+                razorpay_signature: response.razorpay_signature,
+                plan,
+                chefId: selectedChefId,
+                homeAddress,
+                workAddress,
+              }),
+            });
+            const verifyData = await verifyRes.json();
+            if (verifyData.success) {
+              toast({
+                title: '🎉 Payment Successful!',
+                description: 'Your subscription is now active.',
+              });
+              navigate('/dashboard');
+            } else {
+              toast({
+                title: 'Payment Failed',
+                description: verifyData.message || 'Could not verify payment',
+                variant: 'destructive',
+              });
+            }
+          } catch {
+            toast({
+              title: 'Error',
+              description: 'Payment verification failed. Contact support.',
+              variant: 'destructive',
+            });
+          }
+        },
+        prefill: {
+          name: userName,
+          email: user.email,
+        },
+        theme: { color: '#16a34a' },
+        modal: {
+          ondismiss: () => {
+            toast({
+              title: 'Payment cancelled',
+              description: 'You closed the payment window.',
+            });
+          },
+        },
+      };
+
+      const rzp = new (window as any).Razorpay(options);
+      rzp.open();
+
+    } catch (err) {
+      toast({
+        title: 'Error',
+        description: 'Payment failed. Please try again.',
+        variant: 'destructive',
+      });
+      setLoading(false);
     }
-    setLoading(false);
   };
 
   const canProceed = () => {
@@ -105,38 +242,30 @@ export const Subscribe = () => {
   const nextStep = () => {
     const steps: Step[] = ['chef', 'menu', 'plan', 'address', 'confirm', 'payment'];
     const currentIndex = steps.indexOf(step);
-    if (currentIndex < steps.length - 1) {
-      setStep(steps[currentIndex + 1]);
-    }
+    if (currentIndex < steps.length - 1) setStep(steps[currentIndex + 1]);
   };
 
   const prevStep = () => {
     const steps: Step[] = ['chef', 'menu', 'plan', 'address', 'confirm', 'payment'];
     const currentIndex = steps.indexOf(step);
-    if (currentIndex > 0) {
-      setStep(steps[currentIndex - 1]);
-    }
+    if (currentIndex > 0) setStep(steps[currentIndex - 1]);
   };
 
   const toggleDish = (dishId: string) => {
     setSelectedDishes(prev =>
-      prev.includes(dishId)
-        ? prev.filter(id => id !== dishId)
-        : [...prev, dishId]
+      prev.includes(dishId) ? prev.filter(id => id !== dishId) : [...prev, dishId]
     );
   };
 
   const getSelectedDishesNutrition = () => {
     const selected = chefDishes.filter(d => selectedDishes.includes(d.id));
     if (selected.length === 0) return null;
-    
     const total = selected.reduce((acc, dish) => ({
       calories: acc.calories + dish.nutritionalInfo.calories,
       protein: acc.protein + dish.nutritionalInfo.protein,
       carbs: acc.carbs + dish.nutritionalInfo.carbs,
       fat: acc.fat + dish.nutritionalInfo.fat,
     }), { calories: 0, protein: 0, carbs: 0, fat: 0 });
-
     return {
       avg: {
         calories: Math.round(total.calories / selected.length),
@@ -175,8 +304,8 @@ export const Subscribe = () => {
               })}
             </div>
             <div className="h-2 bg-muted rounded-full overflow-hidden">
-              <div 
-                className="h-full bg-primary transition-all" 
+              <div
+                className="h-full bg-primary transition-all"
                 style={{ width: `${((['chef', 'menu', 'plan', 'address', 'confirm', 'payment'].indexOf(step) + 1) / 6) * 100}%` }}
               />
             </div>
@@ -187,10 +316,9 @@ export const Subscribe = () => {
             <div className="animate-fade-in">
               <h2 className="font-display text-2xl font-bold mb-2">Choose Your Chef</h2>
               <p className="text-muted-foreground mb-6">Select a chef to prepare your daily meals</p>
-              
               <div className="grid gap-4">
                 {chefs.map(chef => (
-                  <Card 
+                  <Card
                     key={chef.id}
                     className={`cursor-pointer transition-all ${
                       selectedChefId === chef.id ? 'ring-2 ring-primary shadow-elevated' : 'shadow-card hover:shadow-card-hover'
@@ -231,8 +359,6 @@ export const Subscribe = () => {
               <p className="text-muted-foreground mb-6">
                 Select dishes from {selectedChef?.name}'s menu. We'll rotate them for your meals.
               </p>
-
-              {/* Nutrition Summary */}
               {nutritionSummary && (
                 <Card className="mb-6 bg-primary/5 border-primary/20">
                   <CardContent className="py-4">
@@ -255,16 +381,13 @@ export const Subscribe = () => {
                   </CardContent>
                 </Card>
               )}
-
               <div className="grid gap-3">
                 {chefDishes.map(dish => (
                   <div
                     key={dish.id}
                     onClick={() => toggleDish(dish.id)}
                     className={`p-4 rounded-xl border-2 cursor-pointer transition-all ${
-                      selectedDishes.includes(dish.id)
-                        ? 'border-primary bg-primary/5'
-                        : 'border-border hover:border-primary/30'
+                      selectedDishes.includes(dish.id) ? 'border-primary bg-primary/5' : 'border-border hover:border-primary/30'
                     }`}
                   >
                     <div className="flex items-center gap-4">
@@ -347,7 +470,6 @@ export const Subscribe = () => {
             <div className="animate-fade-in">
               <h2 className="font-display text-2xl font-bold mb-2">Delivery Addresses</h2>
               <p className="text-muted-foreground mb-6">Add your home and work addresses for flexible delivery</p>
-
               <div className="space-y-6">
                 <Card className="shadow-card">
                   <CardHeader className="pb-2">
@@ -357,35 +479,14 @@ export const Subscribe = () => {
                     </CardTitle>
                   </CardHeader>
                   <CardContent className="space-y-3">
-                    <Input
-                      placeholder="Street address"
-                      value={homeAddress.street}
-                      onChange={(e) => setHomeAddress({ ...homeAddress, street: e.target.value })}
-                      required
-                    />
+                    <Input placeholder="Street address" value={homeAddress.street} onChange={(e) => setHomeAddress({ ...homeAddress, street: e.target.value })} required />
                     <div className="grid grid-cols-2 gap-3">
-                      <Input
-                        placeholder="City"
-                        value={homeAddress.city}
-                        onChange={(e) => setHomeAddress({ ...homeAddress, city: e.target.value })}
-                        required
-                      />
-                      <Input
-                        placeholder="State"
-                        value={homeAddress.state}
-                        onChange={(e) => setHomeAddress({ ...homeAddress, state: e.target.value })}
-                        required
-                      />
+                      <Input placeholder="City" value={homeAddress.city} onChange={(e) => setHomeAddress({ ...homeAddress, city: e.target.value })} required />
+                      <Input placeholder="State" value={homeAddress.state} onChange={(e) => setHomeAddress({ ...homeAddress, state: e.target.value })} required />
                     </div>
-                    <Input
-                      placeholder="ZIP Code"
-                      value={homeAddress.zipCode}
-                      onChange={(e) => setHomeAddress({ ...homeAddress, zipCode: e.target.value })}
-                      required
-                    />
+                    <Input placeholder="ZIP Code" value={homeAddress.zipCode} onChange={(e) => setHomeAddress({ ...homeAddress, zipCode: e.target.value })} required />
                   </CardContent>
                 </Card>
-
                 <Card className="shadow-card">
                   <CardHeader className="pb-2">
                     <CardTitle className="text-base flex items-center gap-2">
@@ -394,28 +495,12 @@ export const Subscribe = () => {
                     </CardTitle>
                   </CardHeader>
                   <CardContent className="space-y-3">
-                    <Input
-                      placeholder="Street address"
-                      value={workAddress.street}
-                      onChange={(e) => setWorkAddress({ ...workAddress, street: e.target.value })}
-                    />
+                    <Input placeholder="Street address" value={workAddress.street} onChange={(e) => setWorkAddress({ ...workAddress, street: e.target.value })} />
                     <div className="grid grid-cols-2 gap-3">
-                      <Input
-                        placeholder="City"
-                        value={workAddress.city}
-                        onChange={(e) => setWorkAddress({ ...workAddress, city: e.target.value })}
-                      />
-                      <Input
-                        placeholder="State"
-                        value={workAddress.state}
-                        onChange={(e) => setWorkAddress({ ...workAddress, state: e.target.value })}
-                      />
+                      <Input placeholder="City" value={workAddress.city} onChange={(e) => setWorkAddress({ ...workAddress, city: e.target.value })} />
+                      <Input placeholder="State" value={workAddress.state} onChange={(e) => setWorkAddress({ ...workAddress, state: e.target.value })} />
                     </div>
-                    <Input
-                      placeholder="ZIP Code"
-                      value={workAddress.zipCode}
-                      onChange={(e) => setWorkAddress({ ...workAddress, zipCode: e.target.value })}
-                    />
+                    <Input placeholder="ZIP Code" value={workAddress.zipCode} onChange={(e) => setWorkAddress({ ...workAddress, zipCode: e.target.value })} />
                   </CardContent>
                 </Card>
               </div>
@@ -427,10 +512,8 @@ export const Subscribe = () => {
             <div className="animate-fade-in">
               <h2 className="font-display text-2xl font-bold mb-2">Confirm Subscription</h2>
               <p className="text-muted-foreground mb-6">Review your subscription details</p>
-
               <Card className="shadow-elevated mb-6">
                 <CardContent className="p-6 space-y-4">
-                  {/* Chef */}
                   <div className="flex items-center gap-4 pb-4 border-b">
                     <div className="w-12 h-12 rounded-xl bg-chef flex items-center justify-center">
                       <ChefHat className="w-6 h-6 text-chef-foreground" />
@@ -440,8 +523,6 @@ export const Subscribe = () => {
                       <p className="font-display font-bold">{selectedChef?.name}</p>
                     </div>
                   </div>
-
-                  {/* Plan */}
                   <div className="pb-4 border-b">
                     <p className="text-sm text-muted-foreground mb-1">Subscription Plan</p>
                     <div className="flex justify-between items-center">
@@ -449,8 +530,6 @@ export const Subscribe = () => {
                       <p className="text-xl font-bold text-primary">{plans.find(p => p.id === plan)?.price}</p>
                     </div>
                   </div>
-
-                  {/* Selected Dishes */}
                   <div className="pb-4 border-b">
                     <p className="text-sm text-muted-foreground mb-2">Selected Dishes ({selectedDishes.length})</p>
                     <div className="flex flex-wrap gap-2">
@@ -459,8 +538,6 @@ export const Subscribe = () => {
                       ))}
                     </div>
                   </div>
-
-                  {/* Address */}
                   <div>
                     <p className="text-sm text-muted-foreground mb-1">Default Delivery</p>
                     <p className="flex items-center gap-2">
@@ -468,7 +545,6 @@ export const Subscribe = () => {
                       {homeAddress.street}, {homeAddress.city}, {homeAddress.state} - {homeAddress.zipCode}
                     </p>
                   </div>
-
                   <div className="pt-4 border-t">
                     <p className="text-sm text-muted-foreground mb-1">Subscription Start Date</p>
                     <p className="font-medium">{startDate.toDateString()}</p>
@@ -483,7 +559,6 @@ export const Subscribe = () => {
             <div className="animate-fade-in">
               <h2 className="font-display text-2xl font-bold mb-2">Payment</h2>
               <p className="text-muted-foreground mb-6">Complete your payment to activate the subscription</p>
-
               <Card className="shadow-elevated mb-6">
                 <CardContent className="p-6 space-y-4">
                   <div className="flex items-center justify-between">
@@ -504,7 +579,6 @@ export const Subscribe = () => {
                   </div>
                 </CardContent>
               </Card>
-
               <div className="grid gap-3 mb-6">
                 {([
                   { id: 'upi', label: 'UPI' },
@@ -522,7 +596,6 @@ export const Subscribe = () => {
                   </Button>
                 ))}
               </div>
-
             </div>
           )}
 
@@ -535,8 +608,8 @@ export const Subscribe = () => {
               </Button>
             )}
             {step !== 'payment' ? (
-              <Button 
-                onClick={nextStep} 
+              <Button
+                onClick={nextStep}
                 disabled={!canProceed()}
                 className="flex-1 gradient-primary"
               >
@@ -544,7 +617,7 @@ export const Subscribe = () => {
                 <ArrowRight className="w-4 h-4 ml-2" />
               </Button>
             ) : (
-              <Button 
+              <Button
                 onClick={handlePayment}
                 disabled={loading}
                 className="flex-1 gradient-primary"
@@ -561,7 +634,3 @@ export const Subscribe = () => {
 };
 
 export default Subscribe;
-
-
-
-

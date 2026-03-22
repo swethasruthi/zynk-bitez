@@ -31,3 +31,5 @@ export const authenticate = (req: express.Request, res: express.Response, next: 
     return res.status(401).json({ message: 'Invalid token' });
   }
 };
+
+export const authenticateToken = authenticate;

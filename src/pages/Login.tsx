@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
 import * as api from '@/services/api';
+import { loginUser, setApiToken } from '@/services/backend';
 import { Layout } from '@/components/layout/Layout';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -24,17 +25,36 @@ export const Login = () => {
     e.preventDefault();
     setIsLoading(true);
 
-    // Slight delay to show loading animation
-    await new Promise(resolve => setTimeout(resolve, 800));
-
     try {
-      const response = api.login(email, password);
-      if (response.success && response.data) {
-        login(response.data);
-        toast({ title: 'Welcome back!', description: `Logged in as ${response.data.name}` });
+      // Try backend login first (required for Razorpay payment)
+      const backendResult = await loginUser(email.trim(), password);
+      if (backendResult.success && backendResult.token && backendResult.user) {
+        setApiToken(backendResult.token);
+        login({
+          id: String(backendResult.user.id),
+          email: backendResult.user.email,
+          password: '',
+          name: backendResult.user.fullName,
+          role: backendResult.user.role,
+          createdAt: new Date().toISOString(),
+        });
+        toast({ title: 'Welcome back!', description: `Logged in as ${backendResult.user.fullName}` });
+        navigate('/dashboard');
+        return;
+      }
+
+      // Fallback to mock API only when backend is unreachable (for demo)
+      const mockResponse = api.login(email, password);
+      if (mockResponse.success && mockResponse.data) {
+        login(mockResponse.data);
+        toast({ title: 'Welcome back!', description: `Logged in as ${mockResponse.data.name} (demo mode)` });
         navigate('/dashboard');
       } else {
-        toast({ title: 'Login Failed', description: response.error, variant: 'destructive' });
+        toast({
+          title: 'Login Failed',
+          description: backendResult.message || mockResponse.error || 'Invalid credentials',
+          variant: 'destructive',
+        });
       }
     } finally {
       setIsLoading(false);

@@ -25,6 +25,8 @@ import authRoutes from "./routes/authRoutes.js";
 import subscriptionRoutes from "./routes/subscriptionRoutes.js";
 import recommendationRoutes from "./routes/recommendationRoutes.js";
 import skipDecisionRoutes from "./routes/skipDecisionRoutes.js";
+import paymentRoutes from "./routes/paymentRoutes.js";
+import catalogRoutes from "./routes/catalogRoutes.js";
 import { errorHandler, notFoundHandler } from "./middlewares/errorHandler.js";
 
 // -----------------------------------------------------------------------------
@@ -77,6 +79,8 @@ async function startServer() {
     app.use("/api/subscriptions", subscriptionRoutes);
     app.use("/api/recommendations", recommendationRoutes);
     app.use("/api/skip-decision", skipDecisionRoutes);
+    app.use("/api/payment", paymentRoutes);
+    app.use("/api", catalogRoutes);
 
     // 3️⃣ 404 handler
     app.use(notFoundHandler);
